@@ -1,0 +1,33 @@
+# Large data files (distribute via Google Drive, not Git)
+*.gpkg
+*.csv
+*.geojson
+*.kml
+*.xlsx
+*.zip
+
+# Raw source data
+data/
+hackathon_data/raw_data/
+
+# Generated binary docs
+*.docx
+
+# Python
+__pycache__/
+*.pyc
+*.pyo
+
+# Jupyter
+.ipynb_checkpoints/
+
+# System / IDE
+*.stackdump
+bash.exe.stackdump
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/
+
+# Claude Code project files
+.claude/
