@@ -1,16 +1,15 @@
 """
-311 Calls Spatial Co-occurrence Analysis
-=========================================
-Finds which 311 call types tend to occur at the same locations (~100 ft radius).
-Uses a 100-foot grid (matching address-level geocoding precision) to identify
-spatial co-occurrence, then computes phi correlation coefficients, odds ratios,
-and statistical significance (chi-squared with FDR correction).
+311 Calls Address-Based Co-occurrence Analysis
+===============================================
+Finds which 311 call types tend to occur at the same address.
+Groups calls by their Address field and computes phi correlation coefficients,
+odds ratios, and statistical significance (chi-squared with FDR correction).
 
 Includes ALL categories under Code Enforcement, Homeless Camp, and
 Homeless Camp - Primary, plus selected Solid Waste and Animal Control
 categories. Full CategoryName labels are used (no aggregation).
 
-Data: SacCounty_SalesForce311_calls.gpkg (1.5M calls, EPSG:3857)
+Data: SacCounty_SalesForce311_calls.gpkg (1.5M calls)
 Output: Correlation heatmaps, ranked pair lists, housing-focused analysis.
 """
 
@@ -19,7 +18,8 @@ import time
 import logging
 from pathlib import Path
 
-import geopandas as gpd
+import sqlite3
+
 import pandas as pd
 import numpy as np
 from scipy.stats import chi2_contingency
@@ -34,9 +34,9 @@ SCRIPT_DIR = Path(__file__).resolve().parent
 PROJECT_ROOT = SCRIPT_DIR.parent
 GPKG = PROJECT_ROOT / 'data' / 'SacCounty_SalesForce311_calls.gpkg'
 OUT_DIR = SCRIPT_DIR
-GRID_SIZE = 100   # feet (EPSG:2226 = CA State Plane Zone 2, US survey feet)
 MIN_CALLS = 50    # minimum calls for a category to be included
 FDR_ALPHA = 0.05  # false discovery rate threshold for significance
+PHI_THRESHOLD = 0.15  # minimum max-phi with any other category to keep in plots
 
 # Categories that MUST be included regardless of count (low-count but
 # analytically important for housing vacancy research)
@@ -75,8 +75,8 @@ log = logging.getLogger(__name__)
 # ── SQL query ──────────────────────────────────────────────────────────────
 
 LOAD_SQL = """
-    SELECT * FROM SalesForce311
-    WHERE CategoryLevel1 IN ('Code Enforcement', 'Homeless Camp', 'Homeless Camp - Primary')
+    SELECT CategoryName, Address FROM SalesForce311
+    WHERE (CategoryLevel1 IN ('Code Enforcement', 'Homeless Camp', 'Homeless Camp - Primary')
        OR CategoryName IN (
            'Solid Waste Illegal Dumping',
            'Solid Waste Code Enforcement Illegal Dumping',
@@ -84,35 +84,32 @@ LOAD_SQL = """
            'Solid Waste Code Enforcement Receptacles - Residential',
            'Solid Waste Code Enforcement Receptacles - Commercial',
            'Animal Control Abandoned'
-       )
+       ))
+      AND Address IS NOT NULL AND Address != ''
 """
 
 
 # ── Helper functions ───────────────────────────────────────────────────────
 
 def load_and_prepare(gpkg_path, sql):
-    """Load 311 calls from GeoPackage, reproject, extract coordinates."""
+    """Load 311 calls from GeoPackage via sqlite3 (no geometry needed)."""
     log.info("Loading 311 calls...")
     t0 = time.time()
-    gdf = gpd.read_file(str(gpkg_path), sql=sql)
-    log.info(f"  Loaded {len(gdf):,} calls in {time.time()-t0:.1f}s (CRS: {gdf.crs})")
+    conn = sqlite3.connect(str(gpkg_path))
+    df = pd.read_sql_query(sql, conn)
+    conn.close()
+    log.info(f"  Loaded {len(df):,} calls in {time.time()-t0:.1f}s")
 
-    if len(gdf) == 0:
+    if len(df) == 0:
         sys.exit("ERROR: No matching calls found. Check table/column names.")
 
-    # Drop null geometries before coordinate extraction
-    gdf = gdf[~gdf.geometry.is_empty & gdf.geometry.notna()]
+    # Drop rows with null/empty address or category
+    df = df.rename(columns={'CategoryName': 'category', 'Address': 'address'})
+    df = df.dropna(subset=['address', 'category'])
+    df = df[df['address'].str.strip() != '']
+    log.info(f"  {len(df):,} calls with valid address")
 
-    log.info("  Reprojecting to EPSG:2226 (US feet)...")
-    gdf = gdf.to_crs(epsg=2226)
-
-    df = pd.DataFrame({
-        'x': gdf.geometry.x,
-        'y': gdf.geometry.y,
-        'category': gdf['CategoryName'],
-    })
-    del gdf
-    return df.dropna(subset=['x', 'y', 'category'])
+    return df[['address', 'category']]
 
 
 def filter_categories(df, min_calls, force_include):
@@ -129,26 +126,20 @@ def filter_categories(df, min_calls, force_include):
     return df[df['category'].isin(keep)].copy()
 
 
-def build_presence_matrix(df, grid_size):
-    """Assign calls to grid cells and build binary presence matrix."""
-    # Integer grid cell IDs (faster than string concatenation)
-    x_grid = (df['x'] // grid_size).astype(np.int64)
-    y_grid = (df['y'] // grid_size).astype(np.int64)
-    # Use large prime to create unique cell hash
-    df['cell'] = x_grid * 100_000_000 + y_grid
-
-    n_cells = df['cell'].nunique()
-    log.info(f"\n{n_cells:,} unique grid cells ({grid_size}ft x {grid_size}ft)")
+def build_presence_matrix(df):
+    """Group calls by address and build binary presence matrix."""
+    n_addrs = df['address'].nunique()
+    log.info(f"\n{n_addrs:,} unique addresses")
 
     log.info("Building presence matrix...")
-    presence = df.groupby(['cell', 'category']).size().unstack(fill_value=0)
+    presence = df.groupby(['address', 'category']).size().unstack(fill_value=0)
     presence = (presence > 0).astype(np.int32)  # int32 to avoid overflow in dot products
-    log.info(f"  {presence.shape[0]:,} cells x {presence.shape[1]} categories")
+    log.info(f"  {presence.shape[0]:,} addresses x {presence.shape[1]} categories")
 
     multi = (presence.sum(axis=1) > 1).sum()
-    log.info(f"  {multi:,} cells ({100*multi/len(presence):.1f}%) have 2+ category types")
+    log.info(f"  {multi:,} addresses ({100*multi/len(presence):.1f}%) have 2+ category types")
 
-    return presence, n_cells
+    return presence, n_addrs
 
 
 def compute_pairwise_stats(presence):
@@ -198,9 +189,9 @@ def compute_pairwise_stats(presence):
                 'lift': lift,
                 'chi2': chi2,
                 'p_value': p_val,
-                'co_occur_cells': int(n11),
-                'cells_cat1': int(n1x),
-                'cells_cat2': int(nx1),
+                'co_occur_addrs': int(n11),
+                'addrs_cat1': int(n1x),
+                'addrs_cat2': int(nx1),
             })
 
     pairs_df = pd.DataFrame(records)
@@ -237,16 +228,38 @@ def classify_pair_group(cat1, cat2):
     return 'intra' if g1_norm == g2_norm else 'cross'
 
 
+def filter_corr_matrix(corr, threshold, force_keep=None):
+    """Keep only categories whose max |phi| with any OTHER category >= threshold."""
+    force_keep = set(force_keep or [])
+    # Zero the diagonal so it doesn't count
+    off_diag = corr.copy()
+    np.fill_diagonal(off_diag.values, 0)
+    max_phi = off_diag.abs().max(axis=1)
+
+    keep = set(max_phi[max_phi >= threshold].index)
+    # Always keep force-included categories that exist in the matrix
+    keep |= force_keep & set(corr.columns)
+
+    dropped = set(corr.columns) - keep
+    keep = sorted(keep, key=lambda c: list(corr.columns).index(c))
+
+    log.info(f"\nPhi threshold filter (>= {threshold}):")
+    log.info(f"  Keeping {len(keep)} of {len(corr)} categories ({len(dropped)} dropped)")
+    if dropped:
+        log.info(f"  Dropped: {', '.join(sorted(dropped))}")
+
+    return corr.loc[keep, keep]
+
+
 # ── Plot functions ─────────────────────────────────────────────────────────
 
-def plot_full_heatmap(corr, n_cells, out_path):
+def plot_full_heatmap(corr, n_addrs, out_path):
     """Full correlation heatmap with all categories."""
     n_cats = len(corr)
-    # Scale figure: ~0.38 inches per category for readable labels
     fig_size = max(20, n_cats * 0.38)
 
     fig, ax = plt.subplots(figsize=(fig_size, fig_size - 2))
-    mask = np.triu(np.ones_like(corr, dtype=bool), k=0)  # mask diagonal + upper
+    mask = np.triu(np.ones_like(corr, dtype=bool), k=0)
     sns.heatmap(
         corr, mask=mask, annot=False,
         cmap=STYLE['cmap'], center=0, vmin=-0.05, vmax=0.85,
@@ -255,8 +268,8 @@ def plot_full_heatmap(corr, n_cells, out_path):
         ax=ax,
     )
     ax.set_title(
-        f'Figure 1: 311 Calls Spatial Co-occurrence (All {n_cats} Categories)\n'
-        f'{GRID_SIZE}-foot grid | {n_cells:,} cells | phi coefficient',
+        f'Figure 1: 311 Calls Co-occurrence by Address ({n_cats} Categories)\n'
+        f'{n_addrs:,} unique addresses | phi coefficient',
         fontsize=STYLE['title_font'], fontweight='bold'
     )
     ax.set_xticklabels(ax.get_xticklabels(), rotation=90, ha='center', fontsize=STYLE['label_font'])
@@ -306,8 +319,8 @@ def plot_top_pairs(pairs_df, metric, title_suffix, out_path, n=30):
     ax.set_yticklabels(labels, fontsize=7)
     ax.set_xlabel(metric.replace('_', ' ').title(), fontsize=11)
     ax.set_title(
-        f'Top {n} Spatially Co-occurring 311 Call Pairs {title_suffix}\n'
-        f'(within {GRID_SIZE}-foot grid cells, full CategoryName labels)',
+        f'Top {n} Co-occurring 311 Call Pairs by Address {title_suffix}\n'
+        f'(same address, full CategoryName labels)',
         fontsize=STYLE['title_font'], fontweight='bold'
     )
     ax.invert_yaxis()
@@ -316,7 +329,7 @@ def plot_top_pairs(pairs_df, metric, title_suffix, out_path, n=30):
         sig = '*' if r.get('significant', False) else ''
         ax.text(
             r[metric] + (top[metric].max() * 0.01), i,
-            f"n={int(r['co_occur_cells']):,}{sig}",
+            f"n={int(r['co_occur_addrs']):,}{sig}",
             va='center', fontsize=6, color='#555'
         )
 
@@ -353,7 +366,7 @@ def plot_housing_focused(corr, pairs_df, housing_cats, out_path):
     )
     ax.set_title(
         'Figure 4: What co-occurs with Housing/Vacancy 311 calls?\n'
-        f'Phi correlation within {GRID_SIZE}-foot grid cells',
+        'Phi correlation by shared address',
         fontsize=STYLE['title_font'], fontweight='bold'
     )
     ax.set_xticklabels(ax.get_xticklabels(), rotation=30, ha='right', fontsize=9)
@@ -412,7 +425,7 @@ def plot_housing_lift(pairs_df, housing_cats, out_path):
     ax.axvline(x=1.0, color='gray', linestyle='--', alpha=0.5, label='Lift = 1 (baseline)')
 
     for i, (_, r) in enumerate(plot_df.iterrows()):
-        ax.text(r['lift'] + 0.05, i, f"phi={r['phi']:.3f}, n={int(r['co_occur_cells'])}",
+        ax.text(r['lift'] + 0.05, i, f"phi={r['phi']:.3f}, n={int(r['co_occur_addrs'])}",
                 va='center', fontsize=6, color='#555')
 
     plt.tight_layout()
@@ -430,7 +443,7 @@ def print_summary(pairs_df, housing_cats):
     for _, r in cross.head(15).iterrows():
         sig = "***" if r['significant'] else ""
         log.info(f"  phi={r['phi']:.3f}  lift={r['lift']:.1f}  "
-                 f"({int(r['co_occur_cells']):>5,} cells)  "
+                 f"({int(r['co_occur_addrs']):>5,} addrs)  "
                  f"{r['category_1']} <-> {r['category_2']} {sig}")
 
     log.info("\n" + "=" * 90)
@@ -447,7 +460,7 @@ def print_summary(pairs_df, housing_cats):
             other = r['category_2'] if r['category_1'] == hcat else r['category_1']
             sig = "***" if r['significant'] else ""
             log.info(f"    phi={r['phi']:.3f}  lift={r['lift']:>5.1f}  "
-                     f"p={r['p_value']:.2e}  ({int(r['co_occur_cells']):>4,} cells)  "
+                     f"p={r['p_value']:.2e}  ({int(r['co_occur_addrs']):>4,} addrs)  "
                      f"{other} {sig}")
 
 
@@ -474,8 +487,8 @@ def main():
         log.info(f"  {cat:<63} {count:>8,}{marker}")
     log.info(f"  {'TOTAL':<63} {len(df):>8,}")
 
-    # Build grid presence matrix
-    presence, n_cells = build_presence_matrix(df, GRID_SIZE)
+    # Build address presence matrix
+    presence, n_addrs = build_presence_matrix(df)
 
     # Compute correlations, odds ratios, significance
     log.info("\nComputing pairwise statistics (phi, odds ratio, lift, chi2)...")
@@ -491,37 +504,44 @@ def main():
         lambda r: classify_pair_group(r['category_1'], r['category_2']), axis=1
     )
 
-    # Save CSVs
+    # Save full CSVs (unfiltered)
     corr.to_csv(OUT_DIR / 'correlation_matrix.csv')
     cooccur.to_csv(OUT_DIR / 'cooccurrence_counts.csv')
     pairs_df.to_csv(OUT_DIR / 'correlated_pairs.csv', index=False)
     log.info(f"\nSaved CSVs to {OUT_DIR}/")
 
+    # ── Filter to high-correlation categories for plots ───────────────────
+    corr_filt = filter_corr_matrix(corr, PHI_THRESHOLD, force_keep=set(HOUSING_CATS))
+    kept_cats = set(corr_filt.columns)
+    pairs_filt = pairs_df[
+        pairs_df['category_1'].isin(kept_cats) & pairs_df['category_2'].isin(kept_cats)
+    ]
+
     # ── Plots ──────────────────────────────────────────────────────────────
 
-    # Figure 1: Full heatmap
-    plot_full_heatmap(corr, n_cells, OUT_DIR / 'correlation_heatmap.png')
+    # Figure 1: Filtered heatmap
+    plot_full_heatmap(corr_filt, n_addrs, OUT_DIR / 'correlation_heatmap.png')
 
-    # Figure 2: Clustered heatmap
-    plot_clustered_heatmap(corr, OUT_DIR / 'correlation_clustered.png')
+    # Figure 2: Filtered clustered heatmap
+    plot_clustered_heatmap(corr_filt, OUT_DIR / 'correlation_clustered.png')
 
-    # Figure 3a: Top 30 pairs overall
+    # Figure 3a: Top 30 pairs (from filtered set)
     plot_top_pairs(
-        pairs_df, 'phi', '(All Pairs)',
+        pairs_filt, 'phi', '(All Pairs)',
         OUT_DIR / 'top_correlated_pairs_all.png', n=30
     )
 
     # Figure 3b: Top 30 CROSS-GROUP pairs (filters out intra-homeless-camp noise)
-    cross_pairs = pairs_df[pairs_df['pair_group'] == 'cross']
+    cross_pairs = pairs_filt[pairs_filt['pair_group'] == 'cross']
     plot_top_pairs(
         cross_pairs, 'phi', '(Cross-Group Only)',
         OUT_DIR / 'top_correlated_pairs_cross.png', n=30
     )
 
-    # Figure 4: Housing-focused heatmap
-    plot_housing_focused(corr, pairs_df, HOUSING_CATS, OUT_DIR / 'housing_focused_correlation.png')
+    # Figure 4: Housing-focused heatmap (uses filtered matrix)
+    plot_housing_focused(corr_filt, pairs_filt, HOUSING_CATS, OUT_DIR / 'housing_focused_correlation.png')
 
-    # Figure 5: Housing lift chart (prevalence-adjusted)
+    # Figure 5: Housing lift chart (uses full pairs for completeness)
     plot_housing_lift(pairs_df, HOUSING_CATS, OUT_DIR / 'housing_lift_chart.png')
 
     # Console summary

@@ -1,0 +1,55 @@
+======================================================================
+MARKET VALUE ESTIMATION SUMMARY
+Generated: 2026-03-01 15:19
+======================================================================
+
+Total parcels:              486,573
+Estimated (any tier):       471,167  (96.8%)
+  Tier A (HPI × sale):      361,288  (74.3%)
+  Tier B (reverse eng.):     78,142  (16.1%)
+  Tier C (stat. ratio):      31,737  (6.5%)
+  No estimate:               15,406  (3.2%)
+Non-arm's-length filtered:      192
+
+HPI source: FHFA All-Transactions, Sacramento–Roseville–Folsom MSA
+HPI current value (2025): 410.81
+Tier-C median assd/market ratio: 0.7987
+
+--- Value Statistics (parcels with estimates) ---
+
+  All tiers (n=471,167):
+    Assessed value  — median $       332,842   mean $       491,832
+    Market estimate — median $       435,495   mean $       736,948
+    Prop 13 benefit — median $        69,764   mean $       269,044
+
+  Tier A (n=361,288):
+    Assessed value  — median $       377,411   mean $       487,676
+    Market estimate — median $       483,228   mean $       753,839
+    Prop 13 benefit — median $        88,473   mean $       297,249
+
+  Tier B (n=78,142):
+    Assessed value  — median $       179,093   mean $       454,284
+    Market estimate — median $       250,486   mean $       637,015
+    Prop 13 benefit — median $        52,029   mean $       183,426
+
+  Tier C (n=31,737):
+    Assessed value  — median $       131,443   mean $       631,531
+    Market estimate — median $       164,576   mean $       790,724
+    Prop 13 benefit — median $        33,133   mean $       159,193
+
+--- Vacant Parcels (n=26,678 with estimates) ---
+    Assessed value  — median $        97,385   mean $       233,412
+    Market estimate — median $       175,153   mean $     1,302,611
+    Prop 13 benefit — median $        33,739   mean $     1,074,768
+
+======================================================================
+ASSUMPTIONS
+======================================================================
+1. FHFA All-Transactions HPI (Sacramento MSA) proxies appreciation for
+   all property types including vacant land.
+2. VAL_TRANSFER = fair market value at sale, after non-arm's-length
+   filter (excluded: price <= $10k AND < 10% of assessed value).
+3. Flat 2%/yr Prop 13 inflation for Tier B back-calculation.
+4. Assessment roll year: 2024.
+5. Land/improvement market value split proportional to assessed shares.
+6. Tier C uses county-wide median assessed-to-market ratio from Tier A.
