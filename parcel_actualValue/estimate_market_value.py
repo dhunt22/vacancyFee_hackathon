@@ -1,318 +1,773 @@
 """
 Estimate actual (market) value of Sacramento County parcels by correcting
-Prop 13 assessed values using the FHFA House Price Index.
+Prop 13 assessed values using FHFA HPI and actual CPI-capped inflation factors,
+with census-block-level comparable sales for parcels lacking sale data.
 
 Methodology
 -----------
-Tier A – HPI-adjusted sale price
-    For parcels with a recorded arm's-length sale price and date, scale the
-    sale price by the ratio of the current HPI to the HPI at the time of sale.
+Tier A - HPI-adjusted sale price
+    For parcels with an arm's-length sale price and date, scale the sale price
+    by the ratio of the current HPI to the HPI at the time of sale.
 
-Tier B – Reverse-engineered from assessed value
-    For parcels with an assessed value and sale date but NO recorded sale
-    price, deflate the assessed value by 2 %/yr back to the sale date to
-    approximate the original base-year value, then apply the HPI ratio.
+Tier B - CPI-deflated assessed value + HPI
+    For parcels with an assessed value and sale date but no valid sale price,
+    deflate the assessed value using actual year-by-year CPI-capped Prop 13
+    factors back to the sale date, then apply the HPI ratio.
 
-Tier C – Statistical ratio (county-wide median)
-    For parcels with only an assessed value and no sale history, divide the
-    assessed value by the county-wide median assessment-to-market ratio
-    derived from Tier-A parcels.
+Tier C - Census block comparable sales
+    For parcels with assessed value but no sale history, estimate value using
+    median $/sqft from comparable Tier-A sales within the same census block
+    group, with fallbacks to tract → zip → county level. Comps are
+    differentiated by property type (vacant / residential / commercial_other).
 
-Non-arm's-length filter
------------------------
-Transactions with VAL_TRANSFER <= $10 000 AND where VAL_TRANSFER is less
-than 10 % of VAL_ASSD are excluded from Tier A (likely intra-family,
-estate, or nominal-consideration transfers).
+Tier D - Zero/missing assessed value
+    For parcels with no assessed value (infrastructure, parks, common areas),
+    use vacant land comp rate x lot size, or $0 if no lot size.
 
-Assumptions
------------
-1. FHFA All-Transactions HPI for Sacramento–Roseville–Folsom MSA is a
-   reasonable proxy for appreciation of all property types, including
-   vacant land.
-2. VAL_TRANSFER equals fair market value at the time of sale (after the
-   non-arm's-length filter above).
-3. A flat 2 % annual Prop 13 inflation factor is used for the Tier-B
-   back-calculation (reality: some years were lower).
-4. Assessment year is 2024; HPI is indexed to 2024-Q4.
-5. For parcels with improvements, the estimated market value is split
-   between land and improvement proportionally to their assessed shares.
+Data sources
+------------
+- hackathon_data/parcels_simplified.gpkg  (491,698 parcels with geometry)
+- data/sacramento_identified_parcels.csv  (census IDs, sale data, building features)
+- FRED CUUR0400SA0  (West Region CPI for Prop 13 deflator)
+- FRED ATNHPIUS40900Q  (Sacramento MSA HPI)
 
-Outputs  (written to the same directory as this script)
+Outputs
 -------
-- parcels_market_value.csv       – all parcels with estimated market values
-- vacant_parcels_market_value.csv – vacant parcels only
-- estimation_summary.txt         – summary statistics and methodology notes
+- parcels_market_value.csv        - all parcels with estimated market values
+- vacant_parcels_market_value.csv - vacant parcels only
+- estimation_summary.txt          - summary statistics and methodology notes
+- prop13_deflator.csv             - cached CPI deflator index
 """
 
-import os
-import sys
-import urllib.request
 import io
+import urllib.request
 from datetime import datetime
 from pathlib import Path
 
-import pandas as pd
+import geopandas as gpd
 import numpy as np
+import pandas as pd
 
 # ---------------------------------------------------------------------------
 # Paths
 # ---------------------------------------------------------------------------
 SCRIPT_DIR = Path(__file__).resolve().parent
 PROJECT_DIR = SCRIPT_DIR.parent
-TRIMMED_CSV = PROJECT_DIR / "hackathon_data" / "parcels_trimmed.csv"
+GPKG_PATH = PROJECT_DIR / "hackathon_data" / "parcels_simplified.gpkg"
+FULL_CSV = PROJECT_DIR / "data" / "sacramento_identified_parcels.csv"
 VACANT_CSV = PROJECT_DIR / "hackathon_data" / "vacant_parcels.csv"
 
 OUT_ALL = SCRIPT_DIR / "parcels_market_value.csv"
 OUT_VACANT = SCRIPT_DIR / "vacant_parcels_market_value.csv"
 OUT_SUMMARY = SCRIPT_DIR / "estimation_summary.txt"
+DEFLATOR_CSV = SCRIPT_DIR / "prop13_deflator.csv"
 
-# ---------------------------------------------------------------------------
-# 1. Download FHFA HPI for Sacramento MSA from FRED
-# ---------------------------------------------------------------------------
-print("Downloading FHFA HPI for Sacramento MSA …")
+ASMT_YEAR = 2024
+MIN_COMPS = 5  # minimum comparable sales for a comp level
 
-HPI_URL = (
-    "https://fred.stlouisfed.org/graph/fredgraph.csv"
-    "?id=ATNHPIUS40900Q"
-)
+# Arm's-length sale codes (verified price codes)
+ARMS_LENGTH_CODES = {"R", "F", "0", "*", "U", "D"}
 
-req = urllib.request.Request(HPI_URL, headers={"User-Agent": "Mozilla/5.0"})
-with urllib.request.urlopen(req, timeout=30) as resp:
-    hpi_raw = resp.read().decode()
 
-hpi = pd.read_csv(io.StringIO(hpi_raw), parse_dates=["observation_date"])
-hpi.rename(columns={"observation_date": "date", "ATNHPIUS40900Q": "hpi"}, inplace=True)
-hpi["year"] = hpi["date"].dt.year
-hpi["quarter"] = hpi["date"].dt.quarter
+# ============================================================================
+# Step 1: Build Prop 13 CPI Deflator Index
+# ============================================================================
+def build_prop13_deflator(deflator_path: Path) -> pd.DataFrame:
+    """Download West Region CPI and compute CPI-capped Prop 13 cumulative factors."""
+    if deflator_path.exists():
+        print(f"  Loading cached deflator from {deflator_path.name}")
+        return pd.read_csv(deflator_path)
 
-# Build a year→Q4 HPI lookup (use latest available quarter per year)
-hpi_annual = hpi.sort_values("date").groupby("year")["hpi"].last()
-HPI_CURRENT = hpi_annual.iloc[-1]          # most recent available
-HPI_CURRENT_YEAR = hpi_annual.index[-1]
+    print("  Downloading West Region CPI (CUUR0400SA0) from FRED ...")
+    url = "https://fred.stlouisfed.org/graph/fredgraph.csv?id=CUUR0400SA0"
+    req = urllib.request.Request(url, headers={"User-Agent": "Mozilla/5.0"})
+    with urllib.request.urlopen(req, timeout=30) as resp:
+        raw = resp.read().decode()
 
-print(f"  HPI range: {hpi['date'].min().date()} – {hpi['date'].max().date()}")
-print(f"  Current HPI ({HPI_CURRENT_YEAR}): {HPI_CURRENT:.2f}")
+    cpi = pd.read_csv(io.StringIO(raw), parse_dates=["observation_date"])
+    cpi.rename(columns={"observation_date": "date", "CUUR0400SA0": "cpi"}, inplace=True)
+    cpi["year"] = cpi["date"].dt.year
 
-# ---------------------------------------------------------------------------
-# 2. Load parcel data
-# ---------------------------------------------------------------------------
-print("Loading parcels_trimmed.csv …")
+    # Annual average CPI
+    annual_cpi = cpi.groupby("year")["cpi"].mean().reset_index()
+    annual_cpi = annual_cpi.sort_values("year").reset_index(drop=True)
 
-COLS = [
-    "PARCEL_APN", "SITE_ADDR", "SITE_CITY", "SITE_ZIP",
-    "VAL_ASSD_LAND", "VAL_ASSD_IMPRV", "VAL_ASSD",
-    "LAST_SALE_DATE_TRANSFER", "VAL_TRANSFER",
-    "USE_CODE_MUNI_DESC", "USE_CODE_MUNI",
-    "LOT_SIZE_AREA", "LIVING_SQFT", "YR_BLT",
-    "JURISDICTION", "H3_INT_9",
-]
+    # Year-over-year % change
+    annual_cpi["yoy_change"] = annual_cpi["cpi"].pct_change()
 
-df = pd.read_csv(TRIMMED_CSV, usecols=COLS, dtype={"PARCEL_APN": str})
+    # Cap at 2% (Prop 13 limit), floor at 0% (no deflation)
+    annual_cpi["capped_change"] = annual_cpi["yoy_change"].clip(lower=0, upper=0.02)
 
-print(f"  Loaded {len(df):,} parcels")
+    # Cumulative factor from each year to ASMT_YEAR
+    # If a property was last assessed in year Y, its assessed value has been
+    # inflated by the product of (1 + capped_change) for years Y+1 through ASMT_YEAR
+    asmt_idx = annual_cpi.loc[annual_cpi["year"] == ASMT_YEAR].index
+    if len(asmt_idx) == 0:
+        # Use latest year available
+        asmt_idx = annual_cpi.index[-1:]
+    asmt_pos = asmt_idx[0]
 
-# ---------------------------------------------------------------------------
-# 3. Parse sale dates
-# ---------------------------------------------------------------------------
-df["sale_date"] = pd.to_datetime(
-    df["LAST_SALE_DATE_TRANSFER"].dropna().astype(np.int64).astype(str),
-    format="%Y%m%d",
-    errors="coerce",
-)
-df["sale_year"] = df["sale_date"].dt.year
+    cum_factors = []
+    for i in range(len(annual_cpi)):
+        if i >= asmt_pos:
+            cum_factors.append(1.0)
+        else:
+            # Product of (1 + capped_change) from i+1 to asmt_pos
+            factor = 1.0
+            for j in range(i + 1, asmt_pos + 1):
+                factor *= (1 + annual_cpi.loc[j, "capped_change"])
+            cum_factors.append(factor)
 
-# ---------------------------------------------------------------------------
-# 4. Non-arm's-length filter
-# ---------------------------------------------------------------------------
-# Flag transactions that look non-arm's-length:
-#   transfer price <= $10 000  AND  transfer < 10% of assessed value
-df["is_arms_length"] = True
-low_price = df["VAL_TRANSFER"].notna() & (df["VAL_TRANSFER"] <= 10_000)
-low_ratio = df["VAL_ASSD"].notna() & (df["VAL_TRANSFER"] < 0.10 * df["VAL_ASSD"])
-df.loc[low_price & low_ratio, "is_arms_length"] = False
+    annual_cpi["cum_factor_to_asmt"] = cum_factors
 
-n_filtered = (~df["is_arms_length"]).sum()
-print(f"  Non-arm's-length transactions filtered: {n_filtered:,}")
+    out = annual_cpi[["year", "cpi", "yoy_change", "capped_change", "cum_factor_to_asmt"]].copy()
+    out.to_csv(deflator_path, index=False)
+    print(f"  Saved deflator to {deflator_path.name} ({len(out)} years)")
+    return out
 
-# ---------------------------------------------------------------------------
-# 5. Map sale_year → HPI at sale
-# ---------------------------------------------------------------------------
-df["hpi_at_sale"] = df["sale_year"].map(hpi_annual)
 
-# For sales before HPI series starts, use earliest available value
-earliest_hpi_year = hpi_annual.index.min()
-pre_hpi = df["sale_year"].notna() & (df["sale_year"] < earliest_hpi_year)
-df.loc[pre_hpi, "hpi_at_sale"] = hpi_annual.iloc[0]
+# ============================================================================
+# Step 2: Download FHFA HPI
+# ============================================================================
+def download_hpi() -> tuple[pd.Series, float, int]:
+    """Download Sacramento MSA HPI; return (year→hpi series, current_hpi, current_year)."""
+    print("  Downloading FHFA HPI for Sacramento MSA ...")
+    url = "https://fred.stlouisfed.org/graph/fredgraph.csv?id=ATNHPIUS40900Q"
+    req = urllib.request.Request(url, headers={"User-Agent": "Mozilla/5.0"})
+    with urllib.request.urlopen(req, timeout=30) as resp:
+        raw = resp.read().decode()
 
-# ---------------------------------------------------------------------------
-# 6. Tier assignment & market value estimation
-# ---------------------------------------------------------------------------
-ASMT_YEAR = 2024  # assessment roll year
+    hpi = pd.read_csv(io.StringIO(raw), parse_dates=["observation_date"])
+    hpi.rename(columns={"observation_date": "date", "ATNHPIUS40900Q": "hpi"}, inplace=True)
+    hpi["year"] = hpi["date"].dt.year
 
-# Helpers
-def hpi_ratio(row):
-    """HPI multiplier from sale year to current."""
-    if pd.isna(row["hpi_at_sale"]) or row["hpi_at_sale"] == 0:
-        return np.nan
-    return HPI_CURRENT / row["hpi_at_sale"]
+    # Year → latest-quarter HPI
+    hpi_annual = hpi.sort_values("date").groupby("year")["hpi"].last()
+    hpi_current = hpi_annual.iloc[-1]
+    hpi_current_year = hpi_annual.index[-1]
 
-def tier_a_mask(df):
-    return (
+    print(f"  HPI range: {hpi['date'].min().date()} - {hpi['date'].max().date()}")
+    print(f"  Current HPI ({hpi_current_year}): {hpi_current:.2f}")
+    return hpi_annual, hpi_current, hpi_current_year
+
+
+# ============================================================================
+# Step 3: Load and join data
+# ============================================================================
+def load_and_join(gpkg_path: Path, csv_path: Path) -> pd.DataFrame:
+    """Load parcels_simplified.gpkg and join census/sale data from full CSV."""
+    print("  Loading parcels_simplified.gpkg ...")
+    gdf = gpd.read_file(gpkg_path, layer="parcels")
+    print(f"    {len(gdf):,} rows loaded")
+
+    # Ensure APN is clean string
+    gdf["APN"] = gdf["APN"].astype(str).str.strip()
+
+    # Drop geometry for the working dataframe (we don't need it for value calc)
+    df = pd.DataFrame(gdf.drop(columns="geom" if "geom" in gdf.columns else "geometry"))
+
+    print("  Loading columns from full CSV ...")
+    csv_cols = [
+        "PARCEL_APN", "CENSUS_TRACT", "CENSUS_BLOCK_GROUP",
+        "VAL_TRANSFER", "LAST_SALE_DATE_TRANSFER", "SALE_CODE",
+        "BEDROOMS", "TOTAL_BATHS_CALCULATED", "STORIES_NUMBER",
+        "UNITS_NUMBER", "H3_INT_9",
+    ]
+    csv_df = pd.read_csv(csv_path, usecols=csv_cols, dtype={"PARCEL_APN": str})
+    csv_df["PARCEL_APN"] = csv_df["PARCEL_APN"].astype(str).str.strip()
+
+    # Deduplicate CSV on APN (keep first occurrence)
+    csv_df = csv_df.drop_duplicates(subset="PARCEL_APN", keep="first")
+
+    # Left join
+    df = df.merge(csv_df, left_on="APN", right_on="PARCEL_APN", how="left")
+    df.drop(columns=["PARCEL_APN"], inplace=True, errors="ignore")
+
+    print(f"    After join: {len(df):,} rows")
+    ct_coverage = df["CENSUS_TRACT"].notna().sum()
+    print(f"    Census tract coverage: {ct_coverage:,} ({ct_coverage/len(df)*100:.1f}%)")
+    return df
+
+
+# ============================================================================
+# Step 4: Classify property types
+# ============================================================================
+def classify_property_types(df: pd.DataFrame) -> pd.DataFrame:
+    """Add property_type column: vacant / residential / commercial_other."""
+    is_vacant = (df["is_vacant_coded"] == 1) | (df["LU_GENERAL"] == "Vacant")
+    is_residential = (df["LU_GENERAL"] == "Residential") & ~is_vacant
+
+    df["property_type"] = "commercial_other"
+    df.loc[is_residential, "property_type"] = "residential"
+    df.loc[is_vacant, "property_type"] = "vacant"
+
+    for pt in ["vacant", "residential", "commercial_other"]:
+        n = (df["property_type"] == pt).sum()
+        print(f"    {pt}: {n:,}")
+    return df
+
+
+# ============================================================================
+# Step 5: Prepare sale data
+# ============================================================================
+def prepare_sale_data(df: pd.DataFrame, hpi_annual: pd.Series) -> pd.DataFrame:
+    """Parse sale dates, filter non-arm's-length, map HPI."""
+    # Parse sale date
+    sale_raw = df["LAST_SALE_DATE_TRANSFER"].dropna()
+    df["sale_date"] = pd.to_datetime(
+        sale_raw.astype(np.int64).astype(str),
+        format="%Y%m%d",
+        errors="coerce",
+    )
+    df["sale_year"] = df["sale_date"].dt.year
+
+    # Arm's-length filter using SALE_CODE + price-based filter
+    df["SALE_CODE"] = df["SALE_CODE"].fillna("").astype(str).str.strip()
+    has_code = df["SALE_CODE"] != ""
+    code_ok = df["SALE_CODE"].isin(ARMS_LENGTH_CODES)
+
+    # Price-based filter: exclude <=10K AND <10% of assessed
+    low_price = df["VAL_TRANSFER"].notna() & (df["VAL_TRANSFER"] <= 10_000)
+    low_ratio = df["VAL_ASSD"].notna() & (df["VAL_TRANSFER"] < 0.10 * df["VAL_ASSD"])
+
+    # is_arms_length: must have an arm's-length code (or no code at all) AND not fail price filter
+    df["is_arms_length"] = True
+    # Exclude known non-arm's-length codes (T = tax-exempt, ^ = non-arm's-length)
+    non_al_codes = {"T", "^"}
+    df.loc[df["SALE_CODE"].isin(non_al_codes), "is_arms_length"] = False
+    # Exclude low-price transfers
+    df.loc[low_price & low_ratio, "is_arms_length"] = False
+
+    n_filtered = (~df["is_arms_length"]).sum()
+    print(f"  Non-arm's-length transactions filtered: {n_filtered:,}")
+
+    # Map sale_year → HPI at sale
+    df["hpi_at_sale"] = df["sale_year"].map(hpi_annual)
+
+    # For sales before HPI series starts, use earliest available value
+    earliest_hpi_year = hpi_annual.index.min()
+    pre_hpi = df["sale_year"].notna() & (df["sale_year"] < earliest_hpi_year)
+    df.loc[pre_hpi, "hpi_at_sale"] = hpi_annual.iloc[0]
+
+    return df
+
+
+# ============================================================================
+# Step 6: Tier A -- HPI-adjusted sale price
+# ============================================================================
+def estimate_tier_a(df: pd.DataFrame, hpi_current: float) -> pd.DataFrame:
+    """Tier A: parcels with arm's-length sale price + HPI data."""
+    mask = (
         df["VAL_TRANSFER"].notna()
         & (df["VAL_TRANSFER"] > 0)
         & df["is_arms_length"]
         & df["hpi_at_sale"].notna()
+        & (df["hpi_at_sale"] > 0)
     )
 
-def tier_b_mask(df):
-    return (
-        ~tier_a_mask(df)
+    df.loc[mask, "hpi_mult"] = hpi_current / df.loc[mask, "hpi_at_sale"]
+    df.loc[mask, "est_market_value"] = df.loc[mask, "VAL_TRANSFER"] * df.loc[mask, "hpi_mult"]
+    df.loc[mask, "estimation_tier"] = "A"
+
+    n = mask.sum()
+    print(f"  Tier A: {n:,} parcels")
+    return df
+
+
+# ============================================================================
+# Step 7: Tier B -- CPI-deflated assessed value + HPI
+# ============================================================================
+def estimate_tier_b(
+    df: pd.DataFrame, hpi_current: float, deflator: pd.DataFrame
+) -> pd.DataFrame:
+    """Tier B: parcels with assessed value + sale year but no valid transfer price."""
+    already_estimated = df["estimation_tier"].notna()
+    mask = (
+        ~already_estimated
         & df["VAL_ASSD"].notna()
         & (df["VAL_ASSD"] > 0)
         & df["sale_year"].notna()
         & df["hpi_at_sale"].notna()
+        & (df["hpi_at_sale"] > 0)
     )
 
-def tier_c_mask(df):
-    return ~tier_a_mask(df) & ~tier_b_mask(df) & df["VAL_ASSD"].notna() & (df["VAL_ASSD"] > 0)
+    # Map sale_year → cumulative deflator factor
+    deflator_map = deflator.set_index("year")["cum_factor_to_asmt"]
+    df.loc[mask, "cum_factor"] = df.loc[mask, "sale_year"].map(deflator_map)
+
+    # For years before deflator starts, use the earliest factor
+    earliest_defl_year = deflator["year"].min()
+    pre_defl = mask & df["sale_year"].notna() & (df["sale_year"] < earliest_defl_year)
+    df.loc[pre_defl, "cum_factor"] = deflator_map.iloc[0]
+
+    # Deflate assessed value back to base year, then apply HPI
+    has_factor = mask & df["cum_factor"].notna() & (df["cum_factor"] > 0)
+    base_value = df.loc[has_factor, "VAL_ASSD"] / df.loc[has_factor, "cum_factor"]
+    df.loc[has_factor, "hpi_mult"] = hpi_current / df.loc[has_factor, "hpi_at_sale"]
+    df.loc[has_factor, "est_market_value"] = base_value * df.loc[has_factor, "hpi_mult"]
+    df.loc[has_factor, "estimation_tier"] = "B"
+
+    n = has_factor.sum()
+    print(f"  Tier B: {n:,} parcels")
+    return df
 
 
-# --- Tier A ---
-mask_a = tier_a_mask(df)
-df.loc[mask_a, "hpi_mult"] = df.loc[mask_a].apply(hpi_ratio, axis=1)
-df.loc[mask_a, "est_market_value"] = df.loc[mask_a, "VAL_TRANSFER"] * df.loc[mask_a, "hpi_mult"]
-df.loc[mask_a, "estimation_tier"] = "A"
+# ============================================================================
+# Step 8: Build Census Block Comparable Sales Tables
+# ============================================================================
+def build_comp_tables(df: pd.DataFrame) -> dict[str, pd.DataFrame]:
+    """Build $/sqft comp tables from Tier A parcels at block group, tract, zip, county levels."""
+    tier_a = df[df["estimation_tier"] == "A"].copy()
 
-# --- Tier B ---
-mask_b = tier_b_mask(df)
-years_held_b = ASMT_YEAR - df.loc[mask_b, "sale_year"]
-base_value_b = df.loc[mask_b, "VAL_ASSD"] / (1.02 ** years_held_b)
-df.loc[mask_b, "hpi_mult"] = df.loc[mask_b].apply(hpi_ratio, axis=1)
-df.loc[mask_b, "est_market_value"] = base_value_b * df.loc[mask_b, "hpi_mult"]
-df.loc[mask_b, "estimation_tier"] = "B"
+    # Compute price per sqft
+    # Vacant: use LOT_SIZE_AREA; residential/commercial: use LIVING_SQFT
+    tier_a["comp_sqft"] = np.where(
+        tier_a["property_type"] == "vacant",
+        tier_a["LOT_SIZE_AREA"],
+        tier_a["LIVING_SQFT"],
+    )
 
-# --- Tier C ---
-# Derive county-wide median assessment-to-market ratio from Tier A parcels
-tier_a_df = df.loc[mask_a].copy()
-tier_a_df["assd_to_market"] = tier_a_df["VAL_ASSD"] / tier_a_df["est_market_value"]
-median_ratio = tier_a_df["assd_to_market"].median()
-print(f"  Tier-C median assessment-to-market ratio: {median_ratio:.4f}")
+    # Filter out zero/missing/too-small sqft
+    # Vacant lots: require >= 500 sqft to avoid meaningless tiny-lot $/sqft
+    # Residential/commercial: require >= 100 sqft living area
+    min_sqft = np.where(
+        tier_a["property_type"] == "vacant",
+        500,
+        100,
+    )
+    tier_a = tier_a[
+        tier_a["comp_sqft"].notna() & (tier_a["comp_sqft"] >= min_sqft)
+    ].copy()
+    tier_a["price_per_sqft"] = tier_a["est_market_value"] / tier_a["comp_sqft"]
 
-mask_c = tier_c_mask(df)
-df.loc[mask_c, "est_market_value"] = df.loc[mask_c, "VAL_ASSD"] / median_ratio
-df.loc[mask_c, "estimation_tier"] = "C"
-df.loc[mask_c, "hpi_mult"] = np.nan
+    # Remove 1st/99th percentile outliers within each property type
+    keep_mask = pd.Series(True, index=tier_a.index)
+    for pt in tier_a["property_type"].unique():
+        pt_mask = tier_a["property_type"] == pt
+        lo = tier_a.loc[pt_mask, "price_per_sqft"].quantile(0.01)
+        hi = tier_a.loc[pt_mask, "price_per_sqft"].quantile(0.99)
+        outlier = pt_mask & ((tier_a["price_per_sqft"] < lo) | (tier_a["price_per_sqft"] > hi))
+        keep_mask[outlier] = False
+    tier_a = tier_a[keep_mask].copy()
+    print(f"  Comp base after outlier removal: {len(tier_a):,} Tier-A parcels")
 
-# ---------------------------------------------------------------------------
-# 7. Split estimated market value into land / improvement
-# ---------------------------------------------------------------------------
-has_split = df["VAL_ASSD"].notna() & (df["VAL_ASSD"] > 0)
-land_share = np.where(has_split, df["VAL_ASSD_LAND"].fillna(0) / df["VAL_ASSD"], 1.0)
-imprv_share = 1.0 - land_share
+    # Ensure census columns are string for grouping
+    tier_a["CENSUS_TRACT"] = tier_a["CENSUS_TRACT"].astype(str)
+    tier_a["CENSUS_BLOCK_GROUP"] = tier_a["CENSUS_BLOCK_GROUP"].astype(str)
+    tier_a["SITE_ZIP"] = tier_a["SITE_ZIP"].astype(str)
 
-df["est_market_land"] = df["est_market_value"] * land_share
-df["est_market_imprv"] = df["est_market_value"] * imprv_share
+    # Block group level
+    bg_comps = (
+        tier_a.groupby(["CENSUS_TRACT", "CENSUS_BLOCK_GROUP", "property_type"])
+        .agg(median_ppsf=("price_per_sqft", "median"), n_comps=("price_per_sqft", "count"))
+        .reset_index()
+    )
+    bg_comps = bg_comps[bg_comps["n_comps"] >= MIN_COMPS]
 
-# ---------------------------------------------------------------------------
-# 8. Prop 13 tax benefit (difference between market value and assessed)
-# ---------------------------------------------------------------------------
-df["prop13_benefit"] = df["est_market_value"] - df["VAL_ASSD"]
-df["prop13_benefit"] = df["prop13_benefit"].clip(lower=0)  # no negative benefit
+    # Tract level
+    tract_comps = (
+        tier_a.groupby(["CENSUS_TRACT", "property_type"])
+        .agg(median_ppsf=("price_per_sqft", "median"), n_comps=("price_per_sqft", "count"))
+        .reset_index()
+    )
+    tract_comps = tract_comps[tract_comps["n_comps"] >= MIN_COMPS]
 
-# ---------------------------------------------------------------------------
-# 9. Output
-# ---------------------------------------------------------------------------
-out_cols = [
-    "PARCEL_APN", "SITE_ADDR", "SITE_CITY", "SITE_ZIP",
-    "USE_CODE_MUNI_DESC", "USE_CODE_MUNI",
-    "LOT_SIZE_AREA", "LIVING_SQFT", "YR_BLT",
-    "JURISDICTION", "H3_INT_9",
-    "VAL_ASSD_LAND", "VAL_ASSD_IMPRV", "VAL_ASSD",
-    "VAL_TRANSFER", "LAST_SALE_DATE_TRANSFER", "sale_year",
-    "is_arms_length",
-    "estimation_tier", "hpi_mult",
-    "est_market_value", "est_market_land", "est_market_imprv",
-    "prop13_benefit",
-]
+    # Zip level
+    zip_comps = (
+        tier_a.groupby(["SITE_ZIP", "property_type"])
+        .agg(median_ppsf=("price_per_sqft", "median"), n_comps=("price_per_sqft", "count"))
+        .reset_index()
+    )
+    zip_comps = zip_comps[zip_comps["n_comps"] >= MIN_COMPS]
 
-print(f"Writing {OUT_ALL.name} …")
-df[out_cols].to_csv(OUT_ALL, index=False)
+    # County level
+    county_comps = (
+        tier_a.groupby("property_type")
+        .agg(median_ppsf=("price_per_sqft", "median"), n_comps=("price_per_sqft", "count"))
+        .reset_index()
+    )
 
-# --- Vacant parcels ---
-print(f"Loading vacant_parcels.csv for join …")
-vacant_apns = pd.read_csv(VACANT_CSV, usecols=["PARCEL_APN", "vacancy_tier"],
-                          dtype={"PARCEL_APN": str})
-vacant_merged = vacant_apns.merge(df[out_cols], on="PARCEL_APN", how="left")
-print(f"Writing {OUT_VACANT.name} …")
-vacant_merged.to_csv(OUT_VACANT, index=False)
+    print(f"    Block group comps: {len(bg_comps):,} groups")
+    print(f"    Tract comps:       {len(tract_comps):,} groups")
+    print(f"    Zip comps:         {len(zip_comps):,} groups")
+    print(f"    County comps:      {len(county_comps):,} types")
 
-# ---------------------------------------------------------------------------
-# 10. Summary report
-# ---------------------------------------------------------------------------
-total = len(df)
-has_est = df["est_market_value"].notna().sum()
-n_a = (df["estimation_tier"] == "A").sum()
-n_b = (df["estimation_tier"] == "B").sum()
-n_c = (df["estimation_tier"] == "C").sum()
-n_none = total - has_est
+    return {
+        "block_group": bg_comps,
+        "tract": tract_comps,
+        "zip": zip_comps,
+        "county": county_comps,
+    }
 
-summary_lines = [
-    "=" * 70,
-    "MARKET VALUE ESTIMATION SUMMARY",
-    f"Generated: {datetime.now().strftime('%Y-%m-%d %H:%M')}",
-    "=" * 70,
-    "",
-    f"Total parcels:           {total:>10,}",
-    f"Estimated (any tier):    {has_est:>10,}  ({has_est/total*100:.1f}%)",
-    f"  Tier A (HPI × sale):   {n_a:>10,}  ({n_a/total*100:.1f}%)",
-    f"  Tier B (reverse eng.): {n_b:>10,}  ({n_b/total*100:.1f}%)",
-    f"  Tier C (stat. ratio):  {n_c:>10,}  ({n_c/total*100:.1f}%)",
-    f"  No estimate:           {n_none:>10,}  ({n_none/total*100:.1f}%)",
-    f"Non-arm's-length filtered: {n_filtered:>8,}",
-    "",
-    f"HPI source: FHFA All-Transactions, Sacramento–Roseville–Folsom MSA",
-    f"HPI current value ({HPI_CURRENT_YEAR}): {HPI_CURRENT:.2f}",
-    f"Tier-C median assd/market ratio: {median_ratio:.4f}",
-    "",
-    "--- Value Statistics (parcels with estimates) ---",
-    "",
-]
 
-est = df.loc[df["est_market_value"].notna()]
-for tier_label, tier_code in [("All tiers", None), ("Tier A", "A"), ("Tier B", "B"), ("Tier C", "C")]:
-    subset = est if tier_code is None else est[est["estimation_tier"] == tier_code]
-    if len(subset) == 0:
-        continue
-    summary_lines.append(f"  {tier_label} (n={len(subset):,}):")
-    summary_lines.append(f"    Assessed value  — median ${subset['VAL_ASSD'].median():>14,.0f}   mean ${subset['VAL_ASSD'].mean():>14,.0f}")
-    summary_lines.append(f"    Market estimate — median ${subset['est_market_value'].median():>14,.0f}   mean ${subset['est_market_value'].mean():>14,.0f}")
-    summary_lines.append(f"    Prop 13 benefit — median ${subset['prop13_benefit'].median():>14,.0f}   mean ${subset['prop13_benefit'].mean():>14,.0f}")
-    summary_lines.append("")
+# ============================================================================
+# Step 9: Tier C -- Census block comp-based estimation
+# ============================================================================
+def estimate_tier_c(df: pd.DataFrame, comp_tables: dict) -> pd.DataFrame:
+    """Tier C: parcels with assessed value but not in Tier A/B -- use census block comps."""
+    already_estimated = df["estimation_tier"].notna()
+    mask = ~already_estimated & df["VAL_ASSD"].notna() & (df["VAL_ASSD"] > 0)
 
-# Vacant parcel stats
-v = vacant_merged.dropna(subset=["est_market_value"])
-summary_lines.append(f"--- Vacant Parcels (n={len(v):,} with estimates) ---")
-summary_lines.append(f"    Assessed value  — median ${v['VAL_ASSD'].median():>14,.0f}   mean ${v['VAL_ASSD'].mean():>14,.0f}")
-summary_lines.append(f"    Market estimate — median ${v['est_market_value'].median():>14,.0f}   mean ${v['est_market_value'].mean():>14,.0f}")
-summary_lines.append(f"    Prop 13 benefit — median ${v['prop13_benefit'].median():>14,.0f}   mean ${v['prop13_benefit'].mean():>14,.0f}")
-summary_lines.append("")
+    if mask.sum() == 0:
+        print("  Tier C: 0 parcels")
+        return df
 
-summary_lines += [
-    "=" * 70,
-    "ASSUMPTIONS",
-    "=" * 70,
-    "1. FHFA All-Transactions HPI (Sacramento MSA) proxies appreciation for",
-    "   all property types including vacant land.",
-    "2. VAL_TRANSFER = fair market value at sale, after non-arm's-length",
-    "   filter (excluded: price <= $10k AND < 10% of assessed value).",
-    "3. Flat 2%/yr Prop 13 inflation for Tier B back-calculation.",
-    "4. Assessment roll year: 2024.",
-    "5. Land/improvement market value split proportional to assessed shares.",
-    "6. Tier C uses county-wide median assessed-to-market ratio from Tier A.",
-    "",
-]
+    subset = df.loc[mask].copy()
+    subset["CENSUS_TRACT"] = subset["CENSUS_TRACT"].astype(str)
+    subset["CENSUS_BLOCK_GROUP"] = subset["CENSUS_BLOCK_GROUP"].astype(str)
+    subset["SITE_ZIP"] = subset["SITE_ZIP"].astype(str)
 
-summary_text = "\n".join(summary_lines)
-print(summary_text)
-OUT_SUMMARY.write_text(summary_text)
-print(f"\nDone. Output written to {SCRIPT_DIR}")
+    # Determine sqft to use
+    subset["comp_sqft"] = np.where(
+        subset["property_type"] == "vacant",
+        subset["LOT_SIZE_AREA"],
+        subset["LIVING_SQFT"],
+    )
+
+    bg = comp_tables["block_group"].set_index(["CENSUS_TRACT", "CENSUS_BLOCK_GROUP", "property_type"])["median_ppsf"]
+    tract = comp_tables["tract"].set_index(["CENSUS_TRACT", "property_type"])["median_ppsf"]
+    zipcomp = comp_tables["zip"].set_index(["SITE_ZIP", "property_type"])["median_ppsf"]
+    county = comp_tables["county"].set_index("property_type")["median_ppsf"]
+
+    # Look up comp rate with fallback hierarchy
+    comp_rate = pd.Series(np.nan, index=subset.index)
+    comp_level = pd.Series("", index=subset.index, dtype=str)
+
+    # Block group level
+    bg_keys = list(zip(subset["CENSUS_TRACT"], subset["CENSUS_BLOCK_GROUP"], subset["property_type"]))
+    bg_lookup = pd.Series([bg.get(k, np.nan) for k in bg_keys], index=subset.index)
+    found = bg_lookup.notna()
+    comp_rate[found] = bg_lookup[found]
+    comp_level[found] = "block_group"
+
+    # Tract level fallback
+    missing = comp_rate.isna()
+    if missing.any():
+        tract_keys = list(zip(subset.loc[missing, "CENSUS_TRACT"], subset.loc[missing, "property_type"]))
+        tract_lookup = pd.Series([tract.get(k, np.nan) for k in tract_keys], index=subset.loc[missing].index)
+        found2 = tract_lookup.notna()
+        comp_rate[found2.index[found2]] = tract_lookup[found2]
+        comp_level[found2.index[found2]] = "tract"
+
+    # Zip level fallback
+    missing = comp_rate.isna()
+    if missing.any():
+        zip_keys = list(zip(subset.loc[missing, "SITE_ZIP"], subset.loc[missing, "property_type"]))
+        zip_lookup = pd.Series([zipcomp.get(k, np.nan) for k in zip_keys], index=subset.loc[missing].index)
+        found3 = zip_lookup.notna()
+        comp_rate[found3.index[found3]] = zip_lookup[found3]
+        comp_level[found3.index[found3]] = "zip"
+
+    # County level fallback
+    missing = comp_rate.isna()
+    if missing.any():
+        county_keys = subset.loc[missing, "property_type"]
+        county_lookup = pd.Series(
+            [county.get(k, np.nan) for k in county_keys],
+            index=subset.loc[missing].index,
+        )
+        found4 = county_lookup.notna()
+        comp_rate[found4.index[found4]] = county_lookup[found4]
+        comp_level[found4.index[found4]] = "county"
+
+    # Estimate: comp_rate x sqft (where sqft is available and meets minimum)
+    # Same minimum thresholds as comp base: 500 sqft for vacant, 100 sqft for others
+    min_sqft_apply = np.where(
+        subset["property_type"] == "vacant",
+        500,
+        100,
+    )
+    has_sqft = (
+        subset["comp_sqft"].notna()
+        & (subset["comp_sqft"] >= min_sqft_apply)
+        & comp_rate.notna()
+    )
+
+    df.loc[subset.index[has_sqft], "est_market_value"] = (
+        comp_rate[has_sqft].values * subset.loc[has_sqft, "comp_sqft"].values
+    )
+    df.loc[subset.index[has_sqft], "comp_level"] = comp_level[has_sqft].values
+    df.loc[subset.index[has_sqft], "estimation_tier"] = "C"
+
+    # For parcels missing sqft: fall back to assessed-value / county median ratio
+    # Compute county median assessed-to-market ratio from Tier A
+    tier_a = df[df["estimation_tier"] == "A"]
+    ratios = tier_a["VAL_ASSD"] / tier_a["est_market_value"]
+    median_ratio = ratios.median()
+
+    no_sqft = mask & df["estimation_tier"].isna() & df["VAL_ASSD"].notna() & (df["VAL_ASSD"] > 0)
+    if no_sqft.any():
+        df.loc[no_sqft, "est_market_value"] = df.loc[no_sqft, "VAL_ASSD"] / median_ratio
+        df.loc[no_sqft, "comp_level"] = "ratio_fallback"
+        df.loc[no_sqft, "estimation_tier"] = "C"
+
+    n = (df["estimation_tier"] == "C").sum()
+    n_with_comps = has_sqft.sum()
+    print(f"  Tier C: {n:,} parcels ({n_with_comps:,} from comps, {n - n_with_comps:,} ratio fallback)")
+
+    # Print comp level distribution
+    tier_c = df[df["estimation_tier"] == "C"]
+    if len(tier_c) > 0:
+        cl_dist = tier_c["comp_level"].value_counts()
+        for level, count in cl_dist.items():
+            print(f"    {level}: {count:,}")
+
+    return df
+
+
+# ============================================================================
+# Step 10: Tier D -- Zero/missing assessed value
+# ============================================================================
+def estimate_tier_d(df: pd.DataFrame, comp_tables: dict) -> pd.DataFrame:
+    """Tier D: parcels with no assessed value -- use vacant land comp rate x lot size."""
+    already_estimated = df["estimation_tier"].notna()
+    mask = ~already_estimated
+
+    if mask.sum() == 0:
+        print("  Tier D: 0 parcels")
+        return df
+
+    # Use county-level vacant comp rate as baseline
+    county = comp_tables["county"].set_index("property_type")["median_ppsf"]
+    vacant_rate = county.get("vacant", np.nan)
+
+    has_lot = mask & df["LOT_SIZE_AREA"].notna() & (df["LOT_SIZE_AREA"] > 0) & pd.notna(vacant_rate)
+    df.loc[has_lot, "est_market_value"] = vacant_rate * df.loc[has_lot, "LOT_SIZE_AREA"]
+    df.loc[has_lot, "estimation_tier"] = "D"
+    df.loc[has_lot, "comp_level"] = "county_vacant"
+
+    # Parcels with no lot size: assign $0
+    no_lot = mask & ~has_lot
+    df.loc[no_lot, "est_market_value"] = 0.0
+    df.loc[no_lot, "estimation_tier"] = "D"
+    df.loc[no_lot, "comp_level"] = "no_data"
+
+    n = mask.sum()
+    n_valued = has_lot.sum()
+    print(f"  Tier D: {n:,} parcels ({n_valued:,} with lot-based estimate, {n - n_valued:,} at $0)")
+    return df
+
+
+# ============================================================================
+# Step 11: Land/Improvement split + Prop 13 benefit
+# ============================================================================
+def compute_splits_and_benefit(df: pd.DataFrame) -> pd.DataFrame:
+    """Split est_market_value into land/improvement; compute Prop 13 benefit."""
+    has_split = df["VAL_ASSD"].notna() & (df["VAL_ASSD"] > 0)
+    land_share = np.where(
+        has_split,
+        df["VAL_ASSD_LAND"].fillna(0) / df["VAL_ASSD"],
+        1.0,
+    )
+    imprv_share = 1.0 - land_share
+
+    df["est_market_land"] = df["est_market_value"] * land_share
+    df["est_market_imprv"] = df["est_market_value"] * imprv_share
+
+    df["prop13_benefit"] = (df["est_market_value"] - df["VAL_ASSD"].fillna(0)).clip(lower=0)
+    return df
+
+
+# ============================================================================
+# Step 12: Write outputs
+# ============================================================================
+def write_outputs(df: pd.DataFrame, comp_tables: dict, deflator: pd.DataFrame,
+                  hpi_current: float, hpi_current_year: int) -> None:
+    """Write CSV outputs and summary report."""
+
+    out_cols = [
+        "APN", "SITE_ADDR", "SITE_CITY", "SITE_ZIP",
+        "USE_CODE_MUNI_DESC", "USE_CODE_MUNI",
+        "LU_GENERAL", "property_type",
+        "LOT_SIZE_AREA", "LIVING_SQFT", "YR_BLT",
+        "JURISDICTION", "H3_INT_9",
+        "CENSUS_TRACT", "CENSUS_BLOCK_GROUP",
+        "VAL_ASSD_LAND", "VAL_ASSD_IMPRV", "VAL_ASSD",
+        "VAL_TRANSFER", "LAST_SALE_DATE_TRANSFER", "sale_year",
+        "SALE_CODE", "is_arms_length",
+        "is_vacant_coded", "is_zero_improvement",
+        "estimation_tier", "comp_level", "hpi_mult",
+        "est_market_value", "est_market_land", "est_market_imprv",
+        "prop13_benefit",
+    ]
+
+    # Only include columns that actually exist
+    out_cols = [c for c in out_cols if c in df.columns]
+
+    print(f"Writing {OUT_ALL.name} ...")
+    df[out_cols].to_csv(OUT_ALL, index=False)
+
+    # Vacant parcels
+    print(f"Loading vacant_parcels.csv for join ...")
+    vacant_apns = pd.read_csv(
+        VACANT_CSV, usecols=["PARCEL_APN", "vacancy_tier"], dtype={"PARCEL_APN": str}
+    )
+    vacant_merged = vacant_apns.merge(df[out_cols], left_on="PARCEL_APN", right_on="APN", how="left")
+    print(f"Writing {OUT_VACANT.name} ...")
+    vacant_merged.to_csv(OUT_VACANT, index=False)
+
+    # Summary report
+    total = len(df)
+    has_est = df["est_market_value"].notna().sum()
+    n_a = (df["estimation_tier"] == "A").sum()
+    n_b = (df["estimation_tier"] == "B").sum()
+    n_c = (df["estimation_tier"] == "C").sum()
+    n_d = (df["estimation_tier"] == "D").sum()
+    n_none = total - has_est
+
+    n_filtered = (~df["is_arms_length"]).sum()
+
+    # Tier-A median assessed-to-market ratio
+    tier_a = df[df["estimation_tier"] == "A"]
+    median_ratio = (tier_a["VAL_ASSD"] / tier_a["est_market_value"]).median()
+
+    lines = [
+        "=" * 70,
+        "MARKET VALUE ESTIMATION SUMMARY (v2 -- CPI deflator + census block comps)",
+        f"Generated: {datetime.now().strftime('%Y-%m-%d %H:%M')}",
+        "=" * 70,
+        "",
+        f"Total parcels:            {total:>10,}",
+        f"Estimated (any tier):     {has_est:>10,}  ({has_est/total*100:.1f}%)",
+        f"  Tier A (HPI x sale):    {n_a:>10,}  ({n_a/total*100:.1f}%)",
+        f"  Tier B (CPI-deflated):  {n_b:>10,}  ({n_b/total*100:.1f}%)",
+        f"  Tier C (census comps):  {n_c:>10,}  ({n_c/total*100:.1f}%)",
+        f"  Tier D (no assd val):   {n_d:>10,}  ({n_d/total*100:.1f}%)",
+        f"  No estimate:            {n_none:>10,}  ({n_none/total*100:.1f}%)",
+        f"Non-arm's-length filtered: {n_filtered:>8,}",
+        "",
+        f"HPI source: FHFA All-Transactions, Sacramento-Roseville-Folsom MSA",
+        f"HPI current value ({hpi_current_year}): {hpi_current:.2f}",
+        f"CPI deflator: West Region CPI, capped at 2%/yr (Prop 13)",
+        f"Tier-A median assd/market ratio: {median_ratio:.4f}",
+        "",
+    ]
+
+    # Comp level distribution for Tier C
+    tier_c = df[df["estimation_tier"] == "C"]
+    if len(tier_c) > 0:
+        lines.append("--- Tier C Comp Level Distribution ---")
+        for level, count in tier_c["comp_level"].value_counts().items():
+            lines.append(f"  {level}: {count:,}")
+        lines.append("")
+
+    # Value stats by tier
+    lines.append("--- Value Statistics (parcels with estimates) ---")
+    lines.append("")
+
+    est = df.loc[df["est_market_value"].notna() & (df["est_market_value"] > 0)]
+    for tier_label, tier_code in [
+        ("All tiers", None), ("Tier A", "A"), ("Tier B", "B"),
+        ("Tier C", "C"), ("Tier D", "D"),
+    ]:
+        subset = est if tier_code is None else est[est["estimation_tier"] == tier_code]
+        if len(subset) == 0:
+            continue
+        lines.append(f"  {tier_label} (n={len(subset):,}):")
+        lines.append(f"    Assessed value  -- median ${subset['VAL_ASSD'].median():>14,.0f}   mean ${subset['VAL_ASSD'].mean():>14,.0f}")
+        lines.append(f"    Market estimate -- median ${subset['est_market_value'].median():>14,.0f}   mean ${subset['est_market_value'].mean():>14,.0f}")
+        lines.append(f"    Prop 13 benefit -- median ${subset['prop13_benefit'].median():>14,.0f}   mean ${subset['prop13_benefit'].mean():>14,.0f}")
+        lines.append("")
+
+    # Value stats by property type
+    lines.append("--- Value Statistics by Property Type ---")
+    lines.append("")
+    for pt in ["vacant", "residential", "commercial_other"]:
+        subset = est[est["property_type"] == pt]
+        if len(subset) == 0:
+            continue
+        lines.append(f"  {pt} (n={len(subset):,}):")
+        lines.append(f"    Assessed value  -- median ${subset['VAL_ASSD'].median():>14,.0f}   mean ${subset['VAL_ASSD'].mean():>14,.0f}")
+        lines.append(f"    Market estimate -- median ${subset['est_market_value'].median():>14,.0f}   mean ${subset['est_market_value'].mean():>14,.0f}")
+        lines.append(f"    Prop 13 benefit -- median ${subset['prop13_benefit'].median():>14,.0f}   mean ${subset['prop13_benefit'].mean():>14,.0f}")
+        lines.append("")
+
+    # Vacant parcel stats from joined file
+    v = vacant_merged.dropna(subset=["est_market_value"])
+    v = v[v["est_market_value"] > 0]
+    lines.append(f"--- Vacant Parcels (n={len(v):,} with estimates) ---")
+    if len(v) > 0:
+        lines.append(f"    Assessed value  -- median ${v['VAL_ASSD'].median():>14,.0f}   mean ${v['VAL_ASSD'].mean():>14,.0f}")
+        lines.append(f"    Market estimate -- median ${v['est_market_value'].median():>14,.0f}   mean ${v['est_market_value'].mean():>14,.0f}")
+        lines.append(f"    Prop 13 benefit -- median ${v['prop13_benefit'].median():>14,.0f}   mean ${v['prop13_benefit'].mean():>14,.0f}")
+    lines.append("")
+
+    lines += [
+        "=" * 70,
+        "ASSUMPTIONS",
+        "=" * 70,
+        "1. FHFA All-Transactions HPI (Sacramento MSA) proxies appreciation for",
+        "   all property types including vacant land.",
+        "2. VAL_TRANSFER = fair market value at sale, after non-arm's-length",
+        "   filter (excluded: codes T/^ + price <= $10k AND < 10% of assessed).",
+        "3. Actual West Region CPI-capped at 2%/yr for Tier B (replaces flat 2%).",
+        "4. Assessment roll year: 2024.",
+        "5. Land/improvement market value split proportional to assessed shares.",
+        "6. Tier C uses census-block-level comparable sales ($/sqft) from Tier A,",
+        "   differentiated by property type, with fallback hierarchy:",
+        "   block_group -> tract -> zip -> county. Minimum 5 comps per level.",
+        "7. Tier D uses county-wide vacant land comp rate x lot size.",
+        "",
+    ]
+
+    summary_text = "\n".join(lines)
+    print(summary_text)
+    OUT_SUMMARY.write_text(summary_text)
+    print(f"\nDone. Output written to {SCRIPT_DIR}")
+
+
+# ============================================================================
+# Main
+# ============================================================================
+def main():
+    print("=" * 70)
+    print("MARKET VALUE ESTIMATION v2 -- CPI deflator + census block comps")
+    print("=" * 70)
+
+    print("\n[1/8] Building Prop 13 CPI deflator ...")
+    deflator = build_prop13_deflator(DEFLATOR_CSV)
+
+    print("\n[2/8] Downloading FHFA HPI ...")
+    hpi_annual, hpi_current, hpi_current_year = download_hpi()
+
+    print("\n[3/8] Loading and joining data ...")
+    df = load_and_join(GPKG_PATH, FULL_CSV)
+
+    print("\n[4/8] Classifying property types ...")
+    df = classify_property_types(df)
+
+    print("\n[5/8] Preparing sale data ...")
+    df = prepare_sale_data(df, hpi_annual)
+
+    # Initialize estimation columns
+    df["estimation_tier"] = pd.Series(pd.NA, index=df.index, dtype="string")
+    df["est_market_value"] = np.nan
+    df["hpi_mult"] = np.nan
+    df["comp_level"] = pd.Series(pd.NA, index=df.index, dtype="string")
+    df["cum_factor"] = np.nan
+
+    print("\n[6/8] Estimating market values ...")
+    print("  --- Tier A: HPI-adjusted sale price ---")
+    df = estimate_tier_a(df, hpi_current)
+
+    print("  --- Tier B: CPI-deflated assessed value + HPI ---")
+    df = estimate_tier_b(df, hpi_current, deflator)
+
+    print("\n[7/8] Building census block comp tables ...")
+    comp_tables = build_comp_tables(df)
+
+    print("  --- Tier C: Census block comps ---")
+    df = estimate_tier_c(df, comp_tables)
+
+    print("  --- Tier D: Zero/missing assessed value ---")
+    df = estimate_tier_d(df, comp_tables)
+
+    print("\n  Computing land/improvement split + Prop 13 benefit ...")
+    df = compute_splits_and_benefit(df)
+
+    print("\n[8/8] Writing outputs ...")
+    write_outputs(df, comp_tables, deflator, hpi_current, hpi_current_year)
+
+
+if __name__ == "__main__":
+    main()
