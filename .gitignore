@@ -10,6 +10,12 @@
 data/
 hackathon_data/raw_data/
 
+# Pipeline outputs that can be regenerated
+parcel_actualValue/QC/                       # external (Jeff's) input data
+parcel_actualValue/shapefiles/               # rebuilt by export_shapefile.py
+parcel_actualValue/qc_parcel_diffs.csv       # rebuilt by compare_qc.py
+parcel_actualValue/three_way_diffs.csv       # rebuilt by compare_three_way.py
+
 # Generated binary docs
 *.docx
 
@@ -32,5 +38,10 @@ Thumbs.db
 # Claude Code project files
 .claude/
 
-# Scripts
+# One-off / setup scripts (not part of public pipeline)
 scripts/
+
+# Already-committed figures + summary reports stay tracked (hackathon deliverable);
+# delete the lines above if you want to remove them and regenerate locally only.
+# To stop tracking generated artifacts going forward:
+#   git rm --cached parcel_actualValue/figures/*.png parcel_actualValue/*.txt parcel_actualValue/prop13_deflator.csv

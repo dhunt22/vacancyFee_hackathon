@@ -1,0 +1,27 @@
+Public Comment — Item 6: Enhanced Vacant Lot and Vacant Building Monitoring and Enforcement Program
+
+Dear Chair Maple and members of the Law & Legislation Committee,
+
+As a member of the public and supporter of Sacramento Vacancy Fee (vacancyfee.org), I write in support of an enhanced vacant property monitoring and enforcement program. I appreciate the Chamber's engagement on this issue, but respectfully disagree that a complaint-driven model is sufficient. The City's own data demonstrates otherwise.
+
+The complaint-driven model has already been tried — and the results speak for themselves.
+
+The City's existing Vacant Lot Program has operated since 2018 with minimal enforcement staffing and a largely complaint-driven approach. The outcome: 51% of the 5,115 identified vacant lots remain unregistered, and only 149 have been declared a nuisance. The current system is not identifying "bad actors" — it is allowing them to operate with impunity. The Chamber's suggestion to simply bolster this failing model does not address its structural shortcomings.
+
+The 311 data shows that blight cascades — it does not stay contained.
+
+Sacramento County's 311 system has logged over 1.5 million service calls across 465,000 unique addresses. My analysis of this publicly available dataset (https://data.cityofsacramento.org/search?q=311) reveals that vacant and neglected properties do not generate isolated complaints — they generate cascading, correlated demands on city services. Addresses with housing code enforcement complaints are 12.8 times more likely than expected to also require pest control intervention. Boarded-up properties co-occur with junk and debris complaints, homeless encampment reports, and multiple overlapping enforcement categories at statistically significant rates. In total, I identify over 28,000 blight-related 311 calls tied directly to housing code enforcement, alongside 22,600 additional calls for overgrown vegetation, debris, graffiti, stagnant water, and pest control — each requiring city staff time, dispatching, inspection, and often abatement at taxpayer expense. The nearly 192,000 homeless camp-related 311 calls in this dataset are not unrelated — boarded-up properties co-occur with encampment reports on private property at statistically significant rates. A complaint-driven model does not prevent these costs. It simply shifts them from negligent property owners to their neighbors and to the general fund.
+
+The Chamber frames vacancy as a "transitional phase." The data tells a different story.
+
+The Chamber characterizes vacant lots as properties in transition toward their "highest and best use." But a program with 51% non-compliance after seven years, only 149 nuisance declarations out of 5,115 lots, and Sacramento's current registration fee of $70 — the lowest among comparable jurisdictions surveyed by staff — does not describe a system that is motivating development. Cities like Hayward ($2,550), Alameda ($2,905), and Santa Rosa ($1,040) have recognized that meaningful fees are necessary both for cost recovery and to incentivize activation. The proposed program is not punitive — it is the minimum necessary to fund enforcement that currently does not exist.
+
+The registry must collect more than a binary designation.
+
+I support the enhanced program and urge the committee to ensure the registry captures more than whether a property is simply "vacant" or "not vacant." A meaningful program should collect square footage, number of units, and duration of vacancy for each registered property. This data enables graduated fee structures that distinguish a recently vacated single lot from a multi-acre parcel that has sat idle for a decade. It enables prioritized enforcement. And it provides the foundation for informed policy decisions as this program matures.
+
+I thank the Committee for its sustained attention to this issue since 2023 and urge adoption of a program with dedicated enforcement staffing, proactive monitoring, and fees set at levels that achieve full cost recovery. The owners of vacant properties — not their neighbors — should bear the reasonable costs of maintaining community standards.
+
+Respectfully,
+A Sacramento Resident
+vacancyfee.org

@@ -8,11 +8,19 @@
 
 \## Commercial Section
 
+* Map of vacant properties, data summarizations and some plots, stories about the market
+
 
 
 \## Residential
 
-* Describe housing issue
+* Describe housing issue, burned homes, disrepair, introduction of blight
+
+
+
+\## Meta analysis
+
+* Blight map, correlations, and total equity
 
 
 
