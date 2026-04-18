@@ -3,353 +3,440 @@
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width,initial-scale=1" />
-  <title>The Vacant Equity Gap — Sacramento County, 2025</title>
+  <title>The Vacant Equity Gap — Sacramento Vacancy Fee</title>
   <meta name="description" content="An assessor-grade audit of vacant parcels in Sacramento County and the market value escaping property tax under Proposition 13." />
 
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-  <link href="https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght,SOFT@9..144,300..900,0..100&family=Newsreader:opsz,wght@6..72,300..700&family=JetBrains+Mono:wght@400;600&display=swap" rel="stylesheet">
+  <link href="https://fonts.googleapis.com/css2?family=Lora:ital,wght@0,400..700;1,400..700&family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+
+  <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" integrity="sha256-p4NxAoJBhIIN+hmNHrzRCf9tD/miZyoHS5obTRR9BMY=" crossorigin="" />
+  <link rel="stylesheet" href="https://unpkg.com/leaflet.markercluster@1.5.3/dist/MarkerCluster.css" />
+  <link rel="stylesheet" href="https://unpkg.com/leaflet.markercluster@1.5.3/dist/MarkerCluster.Default.css" />
   <link rel="stylesheet" href="styles.css" />
 </head>
 <body>
+
   <!-- ─── header ─── -->
   <header class="topbar">
-    <div class="topbar__left">
-      <span class="mark">VF/SAC ’26</span>
-      <span class="dot"></span>
-      <span class="meta">Sacramento County · Assessor Roll 2024</span>
-    </div>
-    <div class="topbar__right">
-      <a href="https://vacancyfee.org" class="link-out">vacancyfee.org →</a>
-    </div>
+    <a href="https://vacancyfee.org" class="brand">
+      <span class="brand__mark" aria-hidden="true">
+        <svg viewBox="0 0 32 32" width="28" height="28">
+          <path d="M8 2 L11 2 L13 6 L17 6 L19 10 L24 10 L26 16 L23 22 L24 26 L21 30 L17 30 L13 27 L9 27 L7 23 L4 19 L5 14 L7 9 Z"
+                fill="#3f6e55" stroke="#15191c" stroke-width="0.6" stroke-linejoin="round"/>
+        </svg>
+      </span>
+      <span class="brand__name">Sacramento Vacancy Fee</span>
+    </a>
+    <nav class="topnav">
+      <span class="topnav__crumb">Research</span>
+      <span class="topnav__sep">/</span>
+      <span class="topnav__here">The Vacant Equity Gap</span>
+    </nav>
   </header>
 
   <!-- ─── hero ─── -->
   <section class="hero">
-    <p class="kicker">An audit of vacant parcels &amp; untaxed market equity</p>
+    <div class="hero__inner">
+      <div class="hero__copy">
+        <p class="kicker">A Civic Hackathon Audit · Sacramento County, 2024</p>
 
-    <h1 class="hero__title">
-      <span class="hero__line">Sacramento County is sitting on</span>
-      <span class="hero__big">
-        <span class="amount">$3.2&nbsp;billion</span>
-      </span>
-      <span class="hero__line">of vacant‑parcel market value</span>
-      <span class="hero__line"><em>that escapes the tax roll</em>.</span>
-    </h1>
+        <h1 class="hero__title">
+          $3.2&nbsp;billion of vacant‑parcel market value is escaping the tax roll.
+        </h1>
 
-    <div class="hero__sub">
-      <p>
-        Across <strong>491,698</strong> parcels in Sacramento County we identified
-        <strong>28,670</strong> that meet a working definition of vacant — coded
-        vacant land, zero‑improvement parcels, parking lots, and abandoned service
-        stations. We then estimated the present‑day market value of every parcel
-        in the county using sale prices, the FHFA Sacramento MSA House Price Index,
-        and census‑block‑level comparable sales.
-      </p>
-      <p>
-        The gap between assessed value and market value — the slice Proposition 13
-        keeps off the tax roll — is the headline number above. It is a conservative
-        floor.
-      </p>
-    </div>
+        <p class="hero__lede">
+          Across 491,698 parcels in Sacramento County we identified
+          <strong>28,670</strong> that are vacant or underused — and estimated the
+          present‑day market value of every parcel using sale prices, the FHFA
+          Sacramento House Price Index, and census‑block comparable sales. The gap
+          between the assessment roll and what these parcels would actually sell
+          for is a conservative floor on what a vacancy fee could put back to work.
+        </p>
 
-    <div class="hero__statgrid">
-      <div class="stat">
-        <span class="stat__num">19,364</span>
-        <span class="stat__lbl">Coded vacant land</span>
+        <div class="hero__cta">
+          <a class="btn btn--solid" href="https://vacancyfee.org/get-involved">Get Involved</a>
+          <a class="btn btn--ghost" href="#map">See the Map</a>
+        </div>
       </div>
-      <div class="stat">
-        <span class="stat__num">9,151</span>
-        <span class="stat__lbl">Zero‑improvement</span>
-      </div>
-      <div class="stat">
-        <span class="stat__num">155</span>
-        <span class="stat__lbl">Parking &amp; abandoned</span>
-      </div>
-      <div class="stat stat--accent">
-        <span class="stat__num">28,670</span>
-        <span class="stat__lbl">Total vacant parcels</span>
-      </div>
+
+      <aside class="hero__stats" aria-label="Headline numbers">
+        <div class="stat">
+          <span class="stat__num">28,670</span>
+          <span class="stat__lbl">Vacant or underused parcels</span>
+        </div>
+        <div class="stat">
+          <span class="stat__num">$3.2B</span>
+          <span class="stat__lbl">Untaxed market equity</span>
+        </div>
+        <div class="stat">
+          <span class="stat__num">491,698</span>
+          <span class="stat__lbl">Parcels reassessed</span>
+        </div>
+        <div class="stat">
+          <span class="stat__num">1.5M</span>
+          <span class="stat__lbl">311 calls analyzed</span>
+        </div>
+      </aside>
     </div>
   </section>
 
-  <!-- ─── chapter divider ─── -->
-  <div class="rule">
-    <span>I.</span><span>The Gap</span>
-  </div>
-
-  <!-- ─── chapter 1: the gap ─── -->
-  <section class="chapter">
-    <div class="chapter__head">
-      <h2>Assessed value versus market value</h2>
-      <p class="chapter__lede">
-        Proposition&nbsp;13 caps annual increases in assessed value at 2 %.
-        After decades of appreciation, the assessment roll has drifted far
-        below what these parcels would actually sell for. The gap is largest
-        on parcels that change hands rarely — which is to say, the ones most
-        likely to sit vacant.
-      </p>
-    </div>
-
-    <div class="comparegrid">
-      <div class="comparecard">
-        <span class="comparecard__type">Vacant land</span>
-        <div class="comparecard__bars">
-          <div class="bar">
-            <span class="bar__lbl">Assessed median</span>
-            <div class="bar__rail"><div class="bar__fill bar__fill--assd" style="width: 65.8%"></div></div>
-            <span class="bar__val">$110,360</span>
-          </div>
-          <div class="bar">
-            <span class="bar__lbl">Market median</span>
-            <div class="bar__rail"><div class="bar__fill bar__fill--mkt" style="width: 100%"></div></div>
-            <span class="bar__val">$167,583</span>
-          </div>
-        </div>
-        <p class="comparecard__delta">
-          <span class="delta-arrow">+</span>$57,223 median Prop&nbsp;13 benefit per parcel
+  <!-- ─── chapter 1: The Gap ─── -->
+  <section class="band band--peach">
+    <div class="band__inner">
+      <div class="section-head">
+        <span class="section-head__eyebrow">The Gap</span>
+        <h2>Assessed value vs. market value</h2>
+        <p>
+          Proposition&nbsp;13 caps annual increases in assessed value at 2 %.
+          After decades of appreciation, the assessment roll has drifted far
+          below what these parcels would actually sell for. The gap is largest
+          on parcels that change hands rarely — which is to say, the ones most
+          likely to sit vacant.
         </p>
       </div>
 
-      <div class="comparecard">
-        <span class="comparecard__type">Residential</span>
-        <div class="comparecard__bars">
-          <div class="bar">
-            <span class="bar__lbl">Assessed median</span>
-            <div class="bar__rail"><div class="bar__fill bar__fill--assd" style="width: 71.7%"></div></div>
-            <span class="bar__val">$341,229</span>
+      <div class="comparegrid">
+        <article class="comparecard">
+          <span class="comparecard__type">Vacant land</span>
+          <div class="comparecard__bars">
+            <div class="bar">
+              <span class="bar__lbl">Assessed median</span>
+              <div class="bar__rail"><div class="bar__fill bar__fill--assd" style="width:65.8%"></div></div>
+              <span class="bar__val">$110,360</span>
+            </div>
+            <div class="bar">
+              <span class="bar__lbl">Market median</span>
+              <div class="bar__rail"><div class="bar__fill bar__fill--mkt" style="width:100%"></div></div>
+              <span class="bar__val">$167,583</span>
+            </div>
           </div>
-          <div class="bar">
-            <span class="bar__lbl">Market median</span>
-            <div class="bar__rail"><div class="bar__fill bar__fill--mkt" style="width: 100%"></div></div>
-            <span class="bar__val">$475,723</span>
+          <p class="comparecard__delta">
+            <span class="delta-arrow">↑</span> $57,223 median Prop&nbsp;13 benefit per parcel
+          </p>
+        </article>
+
+        <article class="comparecard">
+          <span class="comparecard__type">Residential</span>
+          <div class="comparecard__bars">
+            <div class="bar">
+              <span class="bar__lbl">Assessed median</span>
+              <div class="bar__rail"><div class="bar__fill bar__fill--assd" style="width:71.7%"></div></div>
+              <span class="bar__val">$341,229</span>
+            </div>
+            <div class="bar">
+              <span class="bar__lbl">Market median</span>
+              <div class="bar__rail"><div class="bar__fill bar__fill--mkt" style="width:100%"></div></div>
+              <span class="bar__val">$475,723</span>
+            </div>
           </div>
-        </div>
-        <p class="comparecard__delta">
-          <span class="delta-arrow">+</span>$133,146 median Prop&nbsp;13 benefit per parcel
-        </p>
+          <p class="comparecard__delta">
+            <span class="delta-arrow">↑</span> $133,146 median Prop&nbsp;13 benefit per parcel
+          </p>
+        </article>
+
+        <article class="comparecard">
+          <span class="comparecard__type">Commercial &amp; other</span>
+          <div class="comparecard__bars">
+            <div class="bar">
+              <span class="bar__lbl">Assessed median</span>
+              <div class="bar__rail"><div class="bar__fill bar__fill--assd" style="width:94.2%"></div></div>
+              <span class="bar__val">$340,028</span>
+            </div>
+            <div class="bar">
+              <span class="bar__lbl">Market median</span>
+              <div class="bar__rail"><div class="bar__fill bar__fill--mkt" style="width:100%"></div></div>
+              <span class="bar__val">$360,930</span>
+            </div>
+          </div>
+          <p class="comparecard__delta">
+            <span class="delta-arrow">↑</span> $123,224 median Prop&nbsp;13 benefit per parcel
+          </p>
+        </article>
       </div>
 
-      <div class="comparecard">
-        <span class="comparecard__type">Commercial &amp; other</span>
-        <div class="comparecard__bars">
-          <div class="bar">
-            <span class="bar__lbl">Assessed median</span>
-            <div class="bar__rail"><div class="bar__fill bar__fill--assd" style="width: 94.2%"></div></div>
-            <span class="bar__val">$340,028</span>
-          </div>
-          <div class="bar">
-            <span class="bar__lbl">Market median</span>
-            <div class="bar__rail"><div class="bar__fill bar__fill--mkt" style="width: 100%"></div></div>
-            <span class="bar__val">$360,930</span>
-          </div>
-        </div>
-        <p class="comparecard__delta">
-          <span class="delta-arrow">+</span>$123,224 median Prop&nbsp;13 benefit per parcel
-        </p>
-      </div>
-    </div>
-
-    <figure class="figure">
-      <img src="figures/03_prop13_benefit_violin.png" alt="Distribution of Prop 13 benefit by tier and property type" />
-      <figcaption>
-        <span class="figure__num">Fig. 1.</span>
-        Distribution of the Prop&nbsp;13 benefit (market – assessed) across all
-        491,698 parcels, broken down by estimation tier. Heavy right‑skew is the
-        signature of long‑held parcels carrying decades of unrealized appreciation.
-      </figcaption>
-    </figure>
-  </section>
-
-  <!-- ─── chapter divider ─── -->
-  <div class="rule">
-    <span>II.</span><span>Where the Vacancies Are</span>
-  </div>
-
-  <!-- ─── chapter 2: classification ─── -->
-  <section class="chapter">
-    <div class="chapter__head">
-      <h2>How we counted vacant parcels</h2>
-      <p class="chapter__lede">
-        The County’s land‑use codebook flags some parcels as vacant outright,
-        but plenty more sit underused without that label. We layer three
-        signals to catch them.
-      </p>
-    </div>
-
-    <ol class="tiers">
-      <li class="tier">
-        <span class="tier__id">T1</span>
-        <h3 class="tier__name">Coded Vacant</h3>
-        <span class="tier__count">19,364</span>
-        <p class="tier__desc">
-          Sacramento land‑use codes beginning with <code>I</code> — explicitly vacant
-          residential, commercial, or industrial land per the assessor’s schema.
-        </p>
-      </li>
-      <li class="tier">
-        <span class="tier__id">T2</span>
-        <h3 class="tier__name">Zero Improvement</h3>
-        <span class="tier__count">9,151</span>
-        <p class="tier__desc">
-          Parcels with $0 in improvement value — no taxable structure on the lot —
-          excluding infrastructure, parks, agriculture, and government holdings.
-        </p>
-      </li>
-      <li class="tier">
-        <span class="tier__id">T3</span>
-        <h3 class="tier__name">Parking &amp; Abandoned</h3>
-        <span class="tier__count">155</span>
-        <p class="tier__desc">
-          Surface parking lots (code <code>BFH</code>) and abandoned service stations
-          (code <code>BFK</code>) — economically vacant even where a structure stands.
-        </p>
-      </li>
-    </ol>
-
-    <figure class="figure figure--side">
-      <img src="figures/10_vacant_by_vacancy_tier.png" alt="Vacant parcel breakdown" />
-      <figcaption>
-        <span class="figure__num">Fig. 2.</span>
-        Vacant parcels by classification tier and median estimated market value.
-      </figcaption>
-    </figure>
-  </section>
-
-  <!-- ─── chapter divider ─── -->
-  <div class="rule">
-    <span>III.</span><span>The 311 Signal</span>
-  </div>
-
-  <!-- ─── chapter 3: 311 signals ─── -->
-  <section class="chapter">
-    <div class="chapter__head">
-      <h2>What residents are calling about</h2>
-      <p class="chapter__lede">
-        Across <strong>1.5&nbsp;million</strong> 311 calls in Sacramento County, four
-        categories cluster strongly with each other on the same address. They form
-        a fingerprint of neglect: board‑ups, code‑enforcement complaints, emergency
-        housing repair, and abandoned animals.
-      </p>
-    </div>
-
-    <div class="figure-pair">
-      <figure class="figure">
-        <img src="figures/housing_focused_correlation.png" alt="Housing-focused 311 correlation matrix" />
+      <figure class="figure figure--zoom">
+        <img src="figures/01_prop13_gap_simple.png" alt="Assessed value vs market value by property type" />
         <figcaption>
-          <span class="figure__num">Fig. 3.</span>
-          Phi‑correlation of housing‑adjacent 311 categories at the address level.
-          Boardup, housing complaint, and emergency repair travel together; abandoned
-          animals are a downstream signal of long‑term vacancy.
-        </figcaption>
-      </figure>
-      <figure class="figure">
-        <img src="figures/housing_lift_chart.png" alt="Lift chart for housing 311 categories" />
-        <figcaption>
-          <span class="figure__num">Fig. 4.</span>
-          Lift over baseline: an address with a Boardup call is far more likely to
-          also receive a Housing Complaint than chance would predict.
+          <span class="figure__num">Figure 1</span>
+          The median Sacramento home is worth ~40 % more than its tax roll says.
+          For commercial property the gap is over 100 %. Click the chart to enlarge.
         </figcaption>
       </figure>
     </div>
   </section>
 
-  <!-- ─── chapter divider ─── -->
-  <div class="rule">
-    <span>IV.</span><span>Method</span>
-  </div>
+  <!-- ─── chapter 2: How we counted ─── -->
+  <section class="band">
+    <div class="band__inner">
+      <div class="section-head">
+        <span class="section-head__eyebrow">Where the Vacancies Are</span>
+        <h2>How we counted vacant parcels</h2>
+        <p>
+          The County’s land‑use codebook flags some parcels as vacant outright,
+          but plenty more sit underused without that label. We layered three
+          signals to catch them.
+        </p>
+      </div>
 
-  <!-- ─── chapter 4: methodology ─── -->
-  <section class="chapter">
-    <div class="chapter__head">
-      <h2>How the market value was estimated</h2>
-      <p class="chapter__lede">
-        Every parcel in the county received an estimate via a four‑tier waterfall.
-        Tiers fall back to less specific data only when better data is missing.
-      </p>
-    </div>
-
-    <table class="method">
-      <thead>
-        <tr>
-          <th>Tier</th>
-          <th>Approach</th>
-          <th>Coverage</th>
-          <th>Share</th>
-        </tr>
-      </thead>
-      <tbody>
-        <tr>
-          <td><span class="pill pill--a">A</span></td>
-          <td>Most recent arm’s‑length sale price, scaled by FHFA Sacramento HPI</td>
-          <td class="num">236,804</td>
-          <td class="num">48.2 %</td>
-        </tr>
-        <tr>
-          <td><span class="pill pill--b">B</span></td>
-          <td>Census‑block comparable $/sqft from Tier A sales (block group → tract → zip → county)</td>
-          <td class="num">214,659</td>
-          <td class="num">43.7 %</td>
-        </tr>
-        <tr>
-          <td><span class="pill pill--c">C</span></td>
-          <td>County‑wide assessed‑to‑market ratio fallback for parcels missing area data</td>
-          <td class="num">19,047</td>
-          <td class="num">3.9 %</td>
-        </tr>
-        <tr>
-          <td><span class="pill pill--d">D</span></td>
-          <td>Vacant‑land $/sqft × lot area for parcels with no assessed value</td>
-          <td class="num">21,188</td>
-          <td class="num">4.3 %</td>
-        </tr>
-      </tbody>
-    </table>
-
-    <p class="footnote">
-      Outliers are tempered with a 5×‑assessed sanity cap; 31,556 parcels were
-      capped (the uncapped value is preserved for audit). The original four‑tier
-      estimator and the hybrid above were cross‑checked against an independent
-      methodology by a teammate; agreement is high on residential and divergent
-      on large commercial — see the <code>compare_three_way</code> report.
-    </p>
-
-    <div class="datasources">
-      <h3>Data sources</h3>
-      <ul>
-        <li>Sacramento County 2024 secured property tax roll</li>
-        <li>Parcel geometries &amp; assessor attributes (491,698 parcels, EPSG:2226)</li>
-        <li>FRED <code>ATNHPIUS40900Q</code> — FHFA all‑transactions HPI, Sacramento MSA</li>
-        <li>FRED <code>CUUR0400SA0</code> — West Region CPI (Prop&nbsp;13 deflator)</li>
-        <li>SacCounty SalesForce311 — 1,545,157 calls, 2018–2025</li>
+      <ul class="tiers" role="list">
+        <li class="tier">
+          <span class="tier__check" aria-hidden="true">✓</span>
+          <h3 class="tier__name">Coded vacant land</h3>
+          <span class="tier__count">19,364 parcels</span>
+          <p class="tier__desc">
+            Sacramento land‑use codes beginning with <code>I</code> — explicitly vacant
+            residential, commercial, or industrial land per the assessor’s schema.
+          </p>
+        </li>
+        <li class="tier">
+          <span class="tier__check" aria-hidden="true">✓</span>
+          <h3 class="tier__name">Zero improvement value</h3>
+          <span class="tier__count">9,151 parcels</span>
+          <p class="tier__desc">
+            Parcels with $0 in improvement value — no taxable structure on the lot —
+            excluding infrastructure, parks, agriculture, and government holdings.
+          </p>
+        </li>
+        <li class="tier">
+          <span class="tier__check" aria-hidden="true">✓</span>
+          <h3 class="tier__name">Parking &amp; abandoned</h3>
+          <span class="tier__count">155 parcels</span>
+          <p class="tier__desc">
+            Surface parking lots (code <code>BFH</code>) and abandoned service stations
+            (code <code>BFK</code>) — economically vacant even where a structure stands.
+          </p>
+        </li>
       </ul>
+
+      <figure class="figure figure--wide figure--zoom">
+        <img src="figures/10_vacant_by_vacancy_tier.png" alt="Vacant parcel breakdown" />
+        <figcaption>
+          <span class="figure__num">Figure 2</span>
+          Vacant parcels by classification tier and median estimated market value.
+        </figcaption>
+      </figure>
+    </div>
+  </section>
+
+  <!-- ─── chapter 3: The Map ─── -->
+  <section class="band band--peach" id="map">
+    <div class="band__inner">
+      <div class="section-head">
+        <span class="section-head__eyebrow">Hotspots</span>
+        <h2>The map of Sacramento’s vacant equity gap</h2>
+        <p>
+          Every blue dot is a vacant parcel; every orange point is a 311 blight call
+          (boarded buildings, housing complaints, abandoned animals). Where they
+          overlap, you are looking at the most actionable targets for a vacancy fee.
+        </p>
+      </div>
+
+      <div class="map-controls">
+        <button class="map-toggle is-active" data-layer="parcels">
+          <span class="map-toggle__dot" style="background:#13587f"></span>
+          Vacant parcels (28K)
+        </button>
+        <button class="map-toggle is-active" data-layer="blight">
+          <span class="map-toggle__dot" style="background:#d97706"></span>
+          311 blight calls (13K)
+        </button>
+        <span class="map-hint">Click any dot for parcel details · Zoom in to expand clusters</span>
+      </div>
+
+      <div id="leafmap" class="leafmap" role="region" aria-label="Map of vacant parcels and 311 blight calls"></div>
+
+      <div class="map-stats" id="mapStats"></div>
+    </div>
+  </section>
+
+  <!-- ─── chapter 4: 311 signal (simplified) ─── -->
+  <section class="band">
+    <div class="band__inner">
+      <div class="section-head">
+        <span class="section-head__eyebrow">The 311 Signal</span>
+        <h2>What residents are calling about</h2>
+        <p>
+          We analyzed <strong>1.5&nbsp;million</strong> 311 calls and looked for
+          categories that show up at the <em>same address</em> far more often than
+          chance would predict. A handful of complaints reliably travel together —
+          and they line up with the same parcels we flagged as vacant.
+        </p>
+      </div>
+
+      <figure class="figure figure--zoom">
+        <img src="figures/03_blight_signals_simple.png" alt="Top 311 co-occurrences for blight" />
+        <figcaption>
+          <span class="figure__num">Figure 3</span>
+          Each multiplier is the “lift” over chance: 13× means properties with a
+          housing‑code complaint are thirteen times more likely than the average
+          address to also report pests. Want the full statistical detail? See the
+          <a href="#appendix">Appendix</a>.
+        </figcaption>
+      </figure>
+    </div>
+  </section>
+
+  <!-- ─── chapter 5: Method ─── -->
+  <section class="band band--peach" id="method">
+    <div class="band__inner">
+      <div class="section-head">
+        <span class="section-head__eyebrow">Method</span>
+        <h2>How the market value was estimated</h2>
+        <p>
+          Every parcel in the county received an estimate via a four‑tier waterfall.
+          Tiers fall back to less specific data only when better data is missing.
+        </p>
+      </div>
+
+      <div class="method-table">
+        <div class="method-row method-row--head">
+          <div>Tier</div><div>Approach</div><div class="num">Coverage</div><div class="num">Share</div>
+        </div>
+        <div class="method-row">
+          <div><span class="pill">A</span></div>
+          <div>Most recent arm’s‑length sale price, scaled by FHFA Sacramento HPI</div>
+          <div class="num">236,804</div><div class="num">48.2 %</div>
+        </div>
+        <div class="method-row">
+          <div><span class="pill">B</span></div>
+          <div>Census‑block comparable $/sqft from Tier A sales (block group → tract → zip → county)</div>
+          <div class="num">214,659</div><div class="num">43.7 %</div>
+        </div>
+        <div class="method-row">
+          <div><span class="pill">C</span></div>
+          <div>County‑wide assessed‑to‑market ratio fallback for parcels missing area data</div>
+          <div class="num">19,047</div><div class="num">3.9 %</div>
+        </div>
+        <div class="method-row">
+          <div><span class="pill">D</span></div>
+          <div>Vacant‑land $/sqft × lot area for parcels with no assessed value</div>
+          <div class="num">21,188</div><div class="num">4.3 %</div>
+        </div>
+      </div>
+
+      <p class="footnote">
+        Outliers are tempered with a 5×‑assessed sanity cap; 31,556 parcels were
+        capped (the uncapped value is preserved for audit). The four‑tier estimator
+        was cross‑checked against an independent methodology by a teammate;
+        agreement is high on residential and divergent on large commercial — see
+        the <code>compare_three_way</code> report in the repo.
+      </p>
+
+      <div class="datasources">
+        <h3>Data sources</h3>
+        <ul>
+          <li>Sacramento County 2024 secured property tax roll</li>
+          <li>Parcel geometries &amp; assessor attributes (491,698 parcels, EPSG:2226)</li>
+          <li>FRED <code>ATNHPIUS40900Q</code> — FHFA all‑transactions HPI, Sacramento MSA</li>
+          <li>FRED <code>CUUR0400SA0</code> — West Region CPI (Prop&nbsp;13 deflator)</li>
+          <li>SacCounty SalesForce311 — 1,545,157 calls, 2018–2025</li>
+        </ul>
+      </div>
+    </div>
+  </section>
+
+  <!-- ─── appendix: dense plots ─── -->
+  <section class="band" id="appendix">
+    <div class="band__inner">
+      <div class="section-head">
+        <span class="section-head__eyebrow">Appendix</span>
+        <h2>For the analysts</h2>
+        <p>
+          The full statistical figures behind the simplified summaries above. Click
+          any image to enlarge.
+        </p>
+      </div>
+
+      <div class="appendix-grid">
+        <figure class="figure figure--zoom">
+          <img src="figures/03_prop13_benefit_violin.png" alt="Prop 13 benefit violin plot" />
+          <figcaption>
+            <span class="figure__num">A1</span>
+            Distribution of the Prop&nbsp;13 benefit (market – assessed) across all
+            491,698 parcels, by property type. Violin width shows density at each
+            dollar amount; heavy right‑skew is the signature of long‑held parcels.
+          </figcaption>
+        </figure>
+
+        <figure class="figure figure--zoom">
+          <img src="figures/housing_focused_correlation.png" alt="Housing-focused 311 phi correlation matrix" />
+          <figcaption>
+            <span class="figure__num">A2</span>
+            Phi‑correlation matrix of all housing‑adjacent 311 categories at the
+            address level. Red cells mark co‑occurrence stronger than chance.
+          </figcaption>
+        </figure>
+
+        <figure class="figure figure--zoom">
+          <img src="figures/housing_lift_chart.png" alt="Housing 311 lift chart" />
+          <figcaption>
+            <span class="figure__num">A3</span>
+            Full lift chart (lift &gt; 1 = stronger than chance, FDR‑significant only)
+            for housing‑adjacent 311 pairs. Color denotes the housing category in the pair.
+          </figcaption>
+        </figure>
+
+        <figure class="figure figure--zoom">
+          <img src="figures/02_assessed_vs_market.png" alt="Assessed vs market scatter" />
+          <figcaption>
+            <span class="figure__num">A4</span>
+            Parcel‑level scatter of assessed value against estimated market value;
+            distance below the diagonal is the Prop&nbsp;13 benefit on that parcel.
+          </figcaption>
+        </figure>
+
+        <figure class="figure figure--zoom">
+          <img src="figures/05_tier_coverage.png" alt="Tier coverage chart" />
+          <figcaption>
+            <span class="figure__num">A5</span>
+            Share of parcels estimated under each tier of the four‑tier waterfall.
+          </figcaption>
+        </figure>
+      </div>
+    </div>
+  </section>
+
+  <!-- ─── closing CTA ─── -->
+  <section class="band band--cta">
+    <div class="band__inner band__inner--centered">
+      <h2 class="cta__title">It’s time for Sacramento to do something.</h2>
+      <p class="cta__lede">
+        The numbers are the conservative floor. Help us turn them into policy.
+      </p>
+      <div class="cta__buttons">
+        <a class="btn btn--solid" href="https://vacancyfee.org/get-involved">Join Our Mailing List</a>
+        <a class="btn btn--ghost" href="https://vacancyfee.org/our-solution">Read Our Solution</a>
+      </div>
     </div>
   </section>
 
   <!-- ─── footer ─── -->
   <footer class="foot">
-    <div class="foot__col">
-      <p class="foot__title">Built at the Sacramento Civic Hackathon</p>
-      <p class="foot__txt">
-        For VacancyFee.org — a coalition advocating a vacancy fee on long‑held,
-        underused property in Sacramento.
+    <div class="foot__inner">
+      <p class="foot__line">
+        Research conducted at the Sacramento Civic Hackathon, 2025.
+        Estimates are policy‑grade approximations, not appraisals.
       </p>
-    </div>
-    <div class="foot__col">
-      <p class="foot__title">Reproduce this</p>
-      <p class="foot__txt">
-        Code &amp; data pipeline:
-        <code>parcel_actualValue/run_pipeline.py</code> ·
+      <p class="foot__line foot__line--meta">
+        Reproduce: <code>parcel_actualValue/run_pipeline.py</code> ·
         <code>311_heatmap/correlation_analysis.py</code>
-      </p>
-    </div>
-    <div class="foot__col foot__col--small">
-      <p class="foot__title">Methodology</p>
-      <p class="foot__txt">
-        Cross‑validated. Estimates are policy‑grade approximations, not appraisals.
       </p>
     </div>
   </footer>
 
+  <!-- ─── lightbox ─── -->
+  <div class="lightbox" id="lightbox" hidden>
+    <button class="lightbox__close" aria-label="Close">&times;</button>
+    <img class="lightbox__img" id="lightboxImg" src="" alt="" />
+  </div>
+
+  <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"
+          integrity="sha256-20nQCchB9co0qIjJZRGuk2/Z9VM+kNiyxNV1lvTlZBo="
+          crossorigin=""></script>
+  <script src="https://unpkg.com/leaflet.markercluster@1.5.3/dist/leaflet.markercluster.js"></script>
+  <script src="https://unpkg.com/leaflet.heat@0.2.0/dist/leaflet-heat.js"></script>
+  <script src="map.js"></script>
+  <script src="lightbox.js"></script>
 </body>
 </html>
