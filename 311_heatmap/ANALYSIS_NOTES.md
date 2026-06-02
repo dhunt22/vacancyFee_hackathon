@@ -1,5 +1,12 @@
 # 311 Calls Heatmap Analysis
 
+> **Looking for the vacancy-fee story?** See **`NARRATIVE.md`** and run
+> **`vacancy_311_synthesis.py`**, which spatially joins 311 calls to parcels and
+> produces the `fig1`–`fig9` narrative suite (vacant land as a blight magnet,
+> the cost-vs-fee gap, etc.). This file documents the *category co-occurrence*
+> analysis (`correlation_analysis.py`), which is the supporting context for
+> *which* blight signals travel together.
+
 ## Data Source
 - `data/SacCounty_SalesForce311_calls.gpkg` (783 MB, 1,545,157 rows)
 - Table: `SalesForce311`
