@@ -3,7 +3,12 @@ Vacancy x 311 Spatial Synthesis
 ===============================================================================
 Joins Sacramento 311 service requests to parcels and asks the question that
 matters for vacancy-fee policy: *do vacant parcels generate a disproportionate
-share of blight-related public-service demand?*
+share of health-&-safety / nuisance public-service demand?*
+
+(Terminology note: research in urban land use avoids "blight," which carries
+racist connotations tied to urban-renewal-era clearance. This project frames the
+same 311 categories as "health & safety" / nuisance complaints, and the pattern
+they reveal as vacant land being "high-maintenance".)
 
 Unlike ``correlation_analysis.py`` (which measures how 311 categories co-occur
 with one another at a shared address), this script performs the actual spatial
@@ -13,10 +18,10 @@ synthesis of two datasets:
     2. parcels     -> hackathon_data/parcels_simplified.gpkg    (polygon geometry)
        vacant set  -> hackathon_data/vacant_parcels.csv         (APN list, 3 tiers)
 
-Each blight-related 311 call is attributed to the nearest parcel (within a
+Each health-&-safety 311 call is attributed to the nearest parcel (within a
 configurable distance), parcels are flagged vacant/occupied, and a narrative
 suite of figures is produced that walks from "how big is the problem" through
-"vacant land is a blight magnet" to "the $70 flat fee does not cover the cost".
+"vacant land is high-maintenance" to "the $70 flat fee does not cover the cost".
 
 The script is defensive about column names and CRS, skips any figure whose
 inputs are missing, and never assumes the heavy datasets are present until it
@@ -68,7 +73,7 @@ FIG_DIR = SCRIPT_DIR / "figures"  # all PNG figures land here
 WORK_CRS = "EPSG:2226"
 
 # A 311 point is attributed to a parcel if it falls within this many feet of it.
-# Many blight calls (illegal dumping, abandoned vehicles, camps) sit in the
+# Many such calls (illegal dumping, abandoned vehicles, camps) sit in the
 # right-of-way fronting a lot rather than inside the polygon, so we snap to the
 # nearest parcel within a tolerance instead of requiring strict containment.
 SNAP_DISTANCE_FT = 150
@@ -76,20 +81,21 @@ SNAP_DISTANCE_FT = 150
 # Distance bands (feet) for the proximity / distance-decay figure.
 DISTANCE_BANDS_FT = [0, 50, 150, 300, 600, 1200, 2640]  # last band ~ 1/2 mile
 
-# Illustrative municipal cost to intake + respond to a single blight 311 case.
-# Clearly labelled as an assumption in the figure; override on the CLI if you
-# have a real per-case figure from the county.
+# Illustrative municipal cost to intake + respond to a single health-&-safety
+# 311 case. Clearly labelled as an assumption in the figure; override on the CLI
+# if you have a real per-case figure from the county.
 COST_PER_CALL_USD = 125.0
 FLAT_VACANCY_FEE_USD = 70.0
 
-# ── Blight category definition ───────────────────────────────────────────────
+# ── Health & safety / nuisance category definition ───────────────────────────
 # These are the 311 categories that plausibly signal neglect, abandonment, or
-# the externalities of vacant land. Mirrors the tiers documented in
-# ANALYSIS_NOTES.md. Used both to pre-filter the (1.5M-row) calls layer and to
-# build the "blight signature" breakdown.
+# the externalities of vacant land (code enforcement, encampments, illegal
+# dumping, abandoned animals). Mirrors the tiers documented in ANALYSIS_NOTES.md.
+# Used both to pre-filter the (1.5M-row) calls layer and to build the complaint-
+# signature breakdown.
 
-BLIGHT_LEVEL1 = ["Code Enforcement", "Homeless Camp", "Homeless Camp - Primary"]
-BLIGHT_CATEGORYNAME = [
+HS_LEVEL1 = ["Code Enforcement", "Homeless Camp", "Homeless Camp - Primary"]
+HS_CATEGORYNAME = [
     "Solid Waste Illegal Dumping",
     "Solid Waste Code Enforcement Illegal Dumping",
     "Solid Waste Code Enforcement Receptacles",
@@ -99,7 +105,7 @@ BLIGHT_CATEGORYNAME = [
 ]
 
 # The handful of categories that most directly name vacancy/abandonment. Used to
-# highlight the "smoking gun" slice within the broader blight set.
+# highlight the "smoking gun" slice within the broader health-&-safety set.
 DIRECT_VACANCY_CATS = [
     "Code Enforcement Housing - Boardup",
     "Code Enforcement Housing - Complaint",
@@ -109,7 +115,7 @@ DIRECT_VACANCY_CATS = [
 
 # ── Visual identity ──────────────────────────────────────────────────────────
 
-C_VACANT = "#E63946"      # red — vacant / blight
+C_VACANT = "#E63946"      # red — vacant / high-maintenance
 C_OCCUPIED = "#8D99AE"    # slate grey — occupied baseline
 C_ACCENT = "#1D3557"      # deep navy — emphasis / text
 C_GOLD = "#F4A259"        # amber — secondary series
@@ -184,17 +190,17 @@ def _sql_in(values):
     return ", ".join(escaped)
 
 
-def load_blight_calls(gpd):
-    """Load only blight-related 311 points, reprojected to the working CRS.
+def load_hs_calls(gpd):
+    """Load only health-&-safety / nuisance 311 points, reprojected to WORK_CRS.
 
     Uses a pushed-down OGR ``where`` clause so we never materialize all 1.5M
     rows in memory.
     """
     where = (
-        f"CategoryLevel1 IN ({_sql_in(BLIGHT_LEVEL1)}) "
-        f"OR CategoryName IN ({_sql_in(BLIGHT_CATEGORYNAME)})"
+        f"CategoryLevel1 IN ({_sql_in(HS_LEVEL1)}) "
+        f"OR CategoryName IN ({_sql_in(HS_CATEGORYNAME)})"
     )
-    log.info("Loading blight 311 calls (filtered at the source)...")
+    log.info("Loading health & safety 311 calls (filtered at the source)...")
     t0 = time.time()
     cols = ["CategoryLevel1", "CategoryLevel2", "CategoryName",
             "DateCreated", "CouncilDistrictNumber", "ZIP", "Neighborhood"]
@@ -294,7 +300,7 @@ def attribute_calls_to_parcels(gpd, calls, parcels):
 
 
 def distance_to_nearest_vacant(gpd, calls, parcels):
-    """Distance (ft) from every blight call to the nearest *vacant* parcel."""
+    """Distance (ft) from every health-&-safety call to the nearest *vacant* parcel."""
     vacant = parcels[parcels["is_vacant"]]
     if vacant.empty:
         return None
@@ -339,7 +345,7 @@ def _bar_labels(ax, bars, fmt="{:.0f}", dy=0.0, fontsize=10, color=C_ACCENT):
 # ── Figures ──────────────────────────────────────────────────────────────────
 
 def fig_burden_per_parcel(parcels, joined, F):
-    """HEADLINE: blight 311 calls per parcel, vacant vs occupied."""
+    """HEADLINE: health-&-safety 311 calls per parcel, vacant vs occupied."""
     n_vacant = int(parcels["is_vacant"].sum())
     n_occupied = int((~parcels["is_vacant"]).sum())
 
@@ -353,28 +359,28 @@ def fig_burden_per_parcel(parcels, joined, F):
 
     F.add("n_vacant_parcels", n_vacant)
     F.add("n_occupied_parcels", n_occupied)
-    F.add("blight_calls_on_vacant", calls_vacant)
-    F.add("blight_calls_on_occupied", calls_occupied)
+    F.add("hs_calls_on_vacant", calls_vacant)
+    F.add("hs_calls_on_occupied", calls_occupied)
     F.add("calls_per_vacant_parcel", round(rate_vacant, 3))
     F.add("calls_per_occupied_parcel", round(rate_occupied, 3))
-    F.add("vacant_blight_multiplier", round(multiplier, 2))
+    F.add("vacant_hs_multiplier", round(multiplier, 2))
 
     fig, ax = plt.subplots(figsize=(8, 6))
     bars = ax.bar(["Occupied\nparcels", "Vacant\nparcels"],
                   [rate_occupied, rate_vacant],
                   color=[C_OCCUPIED, C_VACANT], width=0.6, edgecolor="white")
     _bar_labels(ax, bars, fmt="{:.2f}", dy=rate_vacant * 0.01)
-    ax.set_ylabel("Blight 311 calls per parcel")
-    sub = (f"A vacant parcel draws {multiplier:.1f}x more blight-related 311 "
+    ax.set_ylabel("Health & safety 311 calls per parcel")
+    sub = (f"A vacant parcel draws {multiplier:.1f}x more health & safety 311 "
            f"calls than an occupied one")
-    _titled(ax, "Vacant parcels are blight magnets", sub)
+    _titled(ax, "Vacant parcels are high-maintenance", sub)
     ax.margins(y=0.18)
     _footer(fig)
     _save(fig, "fig1_burden_per_parcel.png")
 
 
 def fig_share_mismatch(parcels, joined, F):
-    """Vacant land is a small share of parcels but a large share of blight calls."""
+    """Vacant land is a small share of parcels but a large share of H&S calls."""
     n_total = len(parcels)
     n_vacant = int(parcels["is_vacant"].sum())
     matched = joined[joined["is_vacant"].notna()]
@@ -384,10 +390,10 @@ def fig_share_mismatch(parcels, joined, F):
     share_parcels = 100 * n_vacant / n_total if n_total else 0
     share_calls = 100 * calls_vacant / calls_total if calls_total else 0
     F.add("vacant_share_of_parcels_pct", round(share_parcels, 1))
-    F.add("vacant_share_of_blight_calls_pct", round(share_calls, 1))
+    F.add("vacant_share_of_hs_calls_pct", round(share_calls, 1))
 
     fig, ax = plt.subplots(figsize=(9, 5.5))
-    metrics = ["Share of all\nparcels", "Share of all\nblight 311 calls"]
+    metrics = ["Share of all\nparcels", "Share of all health &\nsafety 311 calls"]
     vac_vals = [share_parcels, share_calls]
     other_vals = [100 - share_parcels, 100 - share_calls]
     y = np.arange(len(metrics))
@@ -404,18 +410,18 @@ def fig_share_mismatch(parcels, joined, F):
                 fontweight="bold", color=C_VACANT)
     _titled(ax, "A disproportionate burden",
             f"Vacant parcels are {share_parcels:.1f}% of the county's land base "
-            f"but draw {share_calls:.1f}% of its blight complaints", ha="left")
+            f"but draw {share_calls:.1f}% of its health & safety complaints", ha="left")
     ax.legend(loc="lower right", frameon=False)
     ax.grid(axis="y", visible=False)
     _footer(fig)
     _save(fig, "fig2_share_mismatch.png")
 
 
-def fig_blight_signature(joined, F):
-    """What kinds of blight calls land on vacant parcels (the 'signature')."""
+def fig_call_signature(joined, F):
+    """What kinds of H&S calls land on vacant parcels (the 'signature')."""
     matched = joined[joined["is_vacant"] == True]  # noqa: E712
     if matched.empty or "CategoryName" not in matched.columns:
-        log.info("  skipping blight signature (no matched vacant calls).")
+        log.info("  skipping call signature (no matched vacant calls).")
         return
     top = matched["CategoryName"].value_counts().head(15).sort_values()
     F.add("top_vacant_call_category", top.index[-1])
@@ -429,7 +435,7 @@ def fig_blight_signature(joined, F):
     ax.set_yticklabels([_short(c) for c in top.index], fontsize=9)
     ax.xaxis.set_major_formatter(THOUSANDS_FMT)
     ax.set_xlabel("311 calls on vacant parcels")
-    _titled(ax, "The blight signature of vacant land",
+    _titled(ax, "The complaint signature of vacant land",
             "What residents actually report on vacant parcels, "
             "by complaint type", ha="left")
     for i, v in enumerate(top.values):
@@ -448,11 +454,11 @@ def fig_blight_signature(joined, F):
               title="Complaint family")
     ax.grid(axis="y", visible=False)
     _footer(fig)
-    _save(fig, "fig3_blight_signature.png")
+    _save(fig, "fig3_call_signature.png")
 
 
 def fig_distance_decay(dist_to_vacant, F):
-    """Blight calls concentrate near vacant parcels (distance-decay)."""
+    """Health-&-safety calls concentrate near vacant parcels (distance-decay)."""
     if dist_to_vacant is None:
         log.info("  skipping distance-decay (no vacant parcels).")
         return
@@ -466,7 +472,7 @@ def fig_distance_decay(dist_to_vacant, F):
     counts, _ = np.histogram(d, bins=edges)
     pct = 100 * counts / counts.sum()
     within_300 = float(100 * (d <= 300).mean())
-    F.add("pct_blight_calls_within_300ft_of_vacant", round(within_300, 1))
+    F.add("pct_hs_calls_within_300ft_of_vacant", round(within_300, 1))
 
     fig, ax = plt.subplots(figsize=(10, 5.8))
     bars = ax.bar(range(len(pct)), pct, color=C_VACANT, edgecolor="white", width=0.7)
@@ -475,12 +481,12 @@ def fig_distance_decay(dist_to_vacant, F):
     # label or the footer; a touch smaller to fit seven bands.
     ax.set_xticklabels(labels, rotation=0, fontsize=9)
     ax.yaxis.set_major_formatter(FuncFormatter(lambda x, _: f"{x:.0f}%"))
-    ax.set_ylabel("Share of blight 311 calls")
+    ax.set_ylabel("Share of health & safety 311 calls")
     ax.set_xlabel("Distance to nearest vacant parcel", labelpad=10)
     _bar_labels(ax, bars, fmt="{:.0f}%", dy=pct.max() * 0.01, fontsize=9)
-    _titled(ax, "Blight clusters at the edge of vacant land",
-            f"{within_300:.0f}% of all blight 311 calls fall within 300 ft of a "
-            f"vacant parcel", ha="left")
+    _titled(ax, "Health & safety calls cluster at the edge of vacant land",
+            f"{within_300:.0f}% of all health & safety 311 calls fall within "
+            f"300 ft of a vacant parcel", ha="left")
     ax.grid(axis="x", visible=False)
     fig.subplots_adjust(bottom=0.18)
     _footer(fig)
@@ -488,7 +494,7 @@ def fig_distance_decay(dist_to_vacant, F):
 
 
 def fig_council_synthesis(gpd, parcels, joined, F):
-    """Per council district: vacant-parcel count vs blight-call volume."""
+    """Per council district: vacant-parcel count vs health-&-safety-call volume."""
     council = _load_council(gpd)
     if council is None:
         log.info("  skipping council-district figures (boundary file absent).")
@@ -522,14 +528,14 @@ def fig_council_synthesis(gpd, parcels, joined, F):
     ax1.set_ylabel("Vacant parcels", color=C_OCCUPIED)
     ax1.tick_params(axis="y", labelcolor=C_OCCUPIED)
     ax2 = ax1.twinx()
-    b2 = ax2.bar(x + w / 2, df["calls"], w, color=C_VACANT, label="Blight 311 calls")
-    ax2.set_ylabel("Blight 311 calls", color=C_VACANT)
+    b2 = ax2.bar(x + w / 2, df["calls"], w, color=C_VACANT, label="Health & safety 311 calls")
+    ax2.set_ylabel("Health & safety 311 calls", color=C_VACANT)
     ax2.tick_params(axis="y", labelcolor=C_VACANT)
     ax2.grid(False)
     ax1.set_xticks(x)
     ax1.set_xticklabels([str(d) for d in df.index], rotation=45, ha="right")
     ax1.set_xlabel("Council district")
-    ax1.set_title("Where vacancy and blight overlap")
+    ax1.set_title("Where vacancy and health & safety calls overlap")
     ax1.grid(axis="x", visible=False)
     fig.legend(loc="upper right", bbox_to_anchor=(0.9, 0.95), frameon=False)
     _footer(fig)
@@ -549,55 +555,20 @@ def fig_council_synthesis(gpd, parcels, joined, F):
         r = float(np.corrcoef(df["vacant"], df["calls"])[0, 1])
         F.add("council_vacant_vs_calls_r", round(r, 3))
         ax.set_xlabel("Vacant parcels in district")
-        ax.set_ylabel("Blight 311 calls in district")
-        ax.set_title("More vacancy, more blight complaints")
+        ax.set_ylabel("Health & safety 311 calls in district")
+        ax.set_title("More vacancy, more health & safety complaints")
         ax.text(0.05, 0.92, f"r = {r:.2f}", transform=ax.transAxes,
                 fontsize=13, fontweight="bold", color=C_ACCENT)
         _footer(fig)
         _save(fig, "fig6_council_scatter.png")
 
 
-def fig_hotspot_map(parcels, joined, F):
-    """Hexbin density of blight calls with vacant-parcel overlay."""
-    matched = joined[joined["is_vacant"].notna()]
-    if matched.empty:
-        return
-    xs = matched.geometry.x.to_numpy()
-    ys = matched.geometry.y.to_numpy()
-
-    fig, ax = plt.subplots(figsize=(11, 11))
-
-    # Vacant parcels first, as a bright underlay, so the hot spots read on top of
-    # the land they sit on. Larger + more opaque than before so the overlay is
-    # actually visible against the dark end of the colormap.
-    vac = parcels[parcels["is_vacant"]]
-    vac_pts = vac.geometry.representative_point()
-    ax.scatter(vac_pts.x, vac_pts.y, s=6, color="#4CC9F0", alpha=0.45,
-               linewidths=0, label="Vacant parcel", zorder=1)
-
-    hb = ax.hexbin(xs, ys, gridsize=80, cmap="inferno", mincnt=1, bins="log",
-                   alpha=0.92, zorder=2)
-    cb = fig.colorbar(hb, ax=ax, shrink=0.6, pad=0.01)
-    cb.set_label("Blight 311 calls (log scale)")
-
-    # Zoom to the dense core (1st–99th percentile of call locations) so sparse
-    # rural outliers don't shrink the county into a sea of whitespace.
-    x1, x99 = np.percentile(xs, [1, 99])
-    y1, y99 = np.percentile(ys, [1, 99])
-    padx, pady = (x99 - x1) * 0.03, (y99 - y1) * 0.03
-    ax.set_xlim(x1 - padx, x99 + padx)
-    ax.set_ylim(y1 - pady, y99 + pady)
-    ax.set_aspect("equal")
-    ax.set_axis_off()
-    ax.set_title("Blight hot spots & vacant land, Sacramento County", fontsize=17)
-    ax.legend(loc="upper right", frameon=True, markerscale=4, fontsize=10)
-    fig.patch.set_facecolor("white")
-    _footer(fig)
-    _save(fig, "fig7_hotspot_map.png")
-
-
 def fig_temporal_trend(joined, F):
-    """Monthly blight-call volume on vacant parcels over time."""
+    """Monthly health-&-safety-call volume on vacant parcels over time.
+
+    (The old hexbin hot-spot map that used to sit here was removed — the pyQGIS
+    map suite in ../maps/ renders legible, basemapped hot-spot maps instead.)
+    """
     if "report_date" not in joined.columns:
         return
     matched = joined[(joined["is_vacant"] == True) & joined["report_date"].notna()]  # noqa: E712
@@ -615,12 +586,12 @@ def fig_temporal_trend(joined, F):
     roll = monthly.rolling(12, min_periods=3).mean()
     ax.plot(roll.index, roll.values, color=C_ACCENT, linewidth=2, linestyle="--",
             label="12-month average")
-    ax.set_ylabel("Blight 311 calls on vacant parcels / month")
+    ax.set_ylabel("Health & safety 311 calls on vacant parcels / month")
     ax.set_title("The problem isn't going away")
 
     # HONESTY CAVEAT: the SalesForce311 export is sparse before 2023 (the county
     # migrated reporting systems then), so the near-zero pre-2023 values reflect
-    # data coverage, not less blight. Shade and label that window so the ramp is
+    # data coverage, not lower demand. Shade and label that window so the ramp is
     # never mistaken for real growth.
     cutoff = pd.Timestamp("2023-01-01")
     # DateCreated carries a UTC 'Z', so the resampled index is tz-aware; match it
@@ -635,27 +606,27 @@ def fig_temporal_trend(joined, F):
         ax.text(monthly.index.min(), ymax * 0.96,
                 "  Partial 311 coverage before 2023\n"
                 "  (reporting-system migration) —\n"
-                "  not lower blight",
+                "  not lower demand",
                 fontsize=8.5, color="#777777", va="top", ha="left", style="italic")
 
     ax.legend(frameon=False, loc="upper left", bbox_to_anchor=(0.18, 1.0))
     ax.margins(x=0.01)
     F.add("temporal_months_covered", int(len(monthly)))
     _footer(fig)
-    _save(fig, "fig8_temporal_trend.png")
+    _save(fig, "fig7_temporal_trend.png")
 
 
 def fig_cost_vs_fee(F):
-    """The annual public burden of the blight calls that vacant land draws.
+    """The annual public burden of the H&S calls that vacant land draws.
 
     Reframed (deliberately) away from a flat-fee-vs-cost comparison: at any
     defensible per-call cost the $70 fee actually *exceeds* the narrow 311
     response cost, so that framing undercut the argument. The honest, stronger
     story is the *scale of the recurring externality* — what the public spends
-    every year answering blight calls on vacant land, and how much of that is the
-    excess attributable to vacancy (the 3x multiplier expressed in dollars).
+    every year answering health & safety calls on vacant land, and how much of
+    that is the excess attributable to vacancy (the 3x multiplier in dollars).
     """
-    calls_vacant = F.values.get("blight_calls_on_vacant")
+    calls_vacant = F.values.get("hs_calls_on_vacant")
     years = F.values.get("data_years") or 1.0
     if not calls_vacant:
         return
@@ -670,12 +641,12 @@ def fig_cost_vs_fee(F):
     n_vacant = F.values.get("n_vacant_parcels", 0)
     excess_cost = max(rate_v - rate_o, 0) * n_vacant * COST_PER_CALL_USD
 
-    F.add("annual_blight_calls_on_vacant", round(annual_calls))
-    F.add("annual_public_cost_vacant_blight_usd", round(total_cost))
+    F.add("annual_hs_calls_on_vacant", round(annual_calls))
+    F.add("annual_public_cost_vacant_hs_usd", round(total_cost))
     F.add("annual_excess_cost_attributable_to_vacancy_usd", round(excess_cost))
 
     fig, ax = plt.subplots(figsize=(9, 6))
-    labels = ["Every blight 311 call\non vacant parcels",
+    labels = ["Every health & safety 311\ncall on vacant parcels",
               "The excess vs. if vacant land\nbehaved like occupied land"]
     bars = ax.bar(labels, [total_cost, excess_cost],
                   color=[C_VACANT, C_ACCENT], width=0.6, edgecolor="white")
@@ -684,18 +655,18 @@ def fig_cost_vs_fee(F):
     ax.set_ylabel("Public cost per year (county-wide)")
     _titled(ax, "What vacant land costs the public every year",
             f"Illustrative at ${COST_PER_CALL_USD:,.0f}/call · "
-            f"~{annual_calls:,.0f} blight 311 calls a year on vacant parcels · "
-            f"before cleanup, abatement, or lost tax base")
+            f"~{annual_calls:,.0f} health & safety 311 calls a year on vacant "
+            f"parcels · before cleanup, abatement, or lost tax base")
     ax.margins(y=0.18)
     _footer(fig)
-    _save(fig, "fig9_cost_vs_fee.png")
+    _save(fig, "fig8_cost_vs_fee.png")
 
 
 # ── Small utilities ──────────────────────────────────────────────────────────
 
-# Family grouping for the blight-signature chart: a readable label + a color per
-# top-level complaint family. Used to colour the bars AND build a real legend, so
-# the chart no longer references a "red" highlight that never appears.
+# Family grouping for the complaint-signature chart: a readable label + a color
+# per top-level complaint family. Used to colour the bars AND build a real
+# legend, so the chart no longer references a "red" highlight that never appears.
 _FAMILIES = [
     ("Homeless Camp - Primary", "Homeless camp (priority)", C_VACANT),
     ("Homeless Camp", "Homeless camp", C_VACANT),
@@ -785,7 +756,7 @@ def main(argv=None):
     FIG_DIR.mkdir(parents=True, exist_ok=True)
     F = Findings()
 
-    calls = load_blight_calls(gpd)
+    calls = load_hs_calls(gpd)
     parcels, _vac = load_parcels_with_vacancy(gpd)
 
     # Time window covered by the calls — used to annualize per-parcel rates.
@@ -799,18 +770,18 @@ def main(argv=None):
     # Narrative arc -----------------------------------------------------------
     fig_burden_per_parcel(parcels, joined, F)      # 1. the hook
     fig_share_mismatch(parcels, joined, F)         # 2. disproportionate burden
-    fig_blight_signature(joined, F)                # 3. what the blight looks like
+    fig_call_signature(joined, F)                  # 3. what the calls look like
     fig_distance_decay(dist_to_vacant, F)          # 4. proximity proof
     fig_council_synthesis(gpd, parcels, joined, F) # 5/6. geography
-    fig_hotspot_map(parcels, joined, F)            # 7. the map
-    fig_temporal_trend(joined, F)                  # 8. it persists
-    fig_cost_vs_fee(F)                             # 9. the policy punchline
+    fig_temporal_trend(joined, F)                  # 7. it persists
+    fig_cost_vs_fee(F)                             # 8. the policy punchline
+    # (the old hexbin hot-spot map is gone — see the pyQGIS maps in ../maps/)
 
     F.save(OUT_DIR / "findings.json")
     log.info("\nDone. Figures -> %s/figures/, findings.json -> %s/",
              OUT_DIR.name, OUT_DIR.name)
-    log.info("Headline: vacant parcels draw %.1fx the blight calls of occupied land.",
-             F.values.get("vacant_blight_multiplier", float("nan")))
+    log.info("Headline: vacant parcels draw %.1fx the health & safety calls of occupied land.",
+             F.values.get("vacant_hs_multiplier", float("nan")))
 
 
 if __name__ == "__main__":

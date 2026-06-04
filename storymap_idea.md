@@ -14,13 +14,13 @@
 
 \## Residential
 
-* Describe housing issue, burned homes, disrepair, introduction of blight
+* Describe housing issue, burned homes, disrepair, health & safety concerns
 
 
 
 \## Meta analysis
 
-* Blight map, correlations, and total equity
+* Health & safety map, correlations, and total equity
 
 
 

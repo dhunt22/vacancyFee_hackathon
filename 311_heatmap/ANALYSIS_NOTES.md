@@ -2,10 +2,10 @@
 
 > **Looking for the vacancy-fee story?** See **`NARRATIVE.md`** and run
 > **`vacancy_311_synthesis.py`**, which spatially joins 311 calls to parcels and
-> produces the `fig1`–`fig9` narrative suite (vacant land as a blight magnet,
+> produces the `fig1`–`fig8` narrative suite (vacant land as high-maintenance,
 > the cost-vs-fee gap, etc.). This file documents the *category co-occurrence*
 > analysis (`correlation_analysis.py`), which is the supporting context for
-> *which* blight signals travel together.
+> *which* health & safety signals travel together.
 
 ## Data Source
 - `data/SacCounty_SalesForce311_calls.gpkg` (783 MB, 1,545,157 rows)
@@ -30,7 +30,7 @@
 
 **Tier 1 total: 5,624 calls**
 
-### Tier 2 — Strong vacancy correlation (blight indicators)
+### Tier 2 — Strong vacancy correlation (health & safety indicators)
 
 | CategoryName | Count | Why it matters |
 |---|---|---|
@@ -71,7 +71,7 @@
 ## Recommended Approach
 
 1. **Primary heatmap**: Tier 1 + Tier 2 categories (~28K calls) — strong vacancy signal
-2. **Extended heatmap**: Add Tier 3 (~119K calls) — broader blight picture
+2. **Extended heatmap**: Add Tier 3 (~119K calls) — broader health & safety picture
 3. **Homeless camp overlay**: Separate layer for correlation analysis
 4. **Spatial join**: Overlay 311 heatmap with `vacant_parcels.geojson` to quantify co-occurrence
 

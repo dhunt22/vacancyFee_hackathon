@@ -226,9 +226,10 @@
         <span class="section-head__eyebrow">Hotspots</span>
         <h2>The map of Sacramento’s vacant equity gap</h2>
         <p>
-          Every blue dot is a vacant parcel; every orange point is a 311 blight call
-          (boarded buildings, housing complaints, abandoned animals). Where they
-          overlap, you are looking at the most actionable targets for a vacancy fee.
+          Every blue dot is a vacant parcel; every orange point is a 311 health &
+          safety call (boarded buildings, housing complaints, abandoned animals).
+          Where they overlap, you are looking at the most actionable targets for a
+          vacancy fee.
         </p>
       </div>
 
@@ -237,14 +238,14 @@
           <span class="map-toggle__dot" style="background:#13587f"></span>
           Vacant parcels (28K)
         </button>
-        <button class="map-toggle is-active" data-layer="blight">
+        <button class="map-toggle is-active" data-layer="hs">
           <span class="map-toggle__dot" style="background:#d97706"></span>
-          311 blight calls (13K)
+          311 health & safety calls (13K)
         </button>
         <span class="map-hint">Click any dot for parcel details · Zoom in to expand clusters</span>
       </div>
 
-      <div id="leafmap" class="leafmap" role="region" aria-label="Map of vacant parcels and 311 blight calls"></div>
+      <div id="leafmap" class="leafmap" role="region" aria-label="Map of vacant parcels and 311 health and safety calls"></div>
 
       <div class="map-stats" id="mapStats"></div>
     </div>
@@ -265,7 +266,7 @@
       </div>
 
       <figure class="figure figure--zoom">
-        <img src="figures/03_blight_signals_simple.png" alt="Top 311 co-occurrences for blight" />
+        <img src="figures/03_signal_lift_simple.png" alt="Top 311 health & safety call co-occurrences" />
         <figcaption>
           <span class="figure__num">Figure 3</span>
           Each multiplier is the “lift” over chance: 13× means properties with a

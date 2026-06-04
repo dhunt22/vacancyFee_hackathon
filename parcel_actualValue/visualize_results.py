@@ -117,11 +117,19 @@ def chart_assessed_vs_market(df):
     print("  Chart 2: Assessed vs market by property type...")
     data = df[df["has_value"] & df["VAL_ASSD"].notna() & (df["VAL_ASSD"] > 0)].copy()
 
+    # These three property types are mutually exclusive and partition ALL
+    # parcels — "Vacant land" is the vacant-classified set, NOT a subtype of the
+    # others (a point of confusion in review).
+    PT_LABELS = {
+        "residential": "Residential\n(occupied)",
+        "vacant": "Vacant land",
+        "commercial_other": "Commercial\n& other",
+    }
     stats = []
     for pt in ["residential", "vacant", "commercial_other"]:
         subset = data[data["property_type"] == pt]
         stats.append({
-            "Property Type": pt.replace("_", " ").title(),
+            "Property Type": PT_LABELS[pt],
             "Median Assessed": subset["VAL_ASSD"].median(),
             "Median Market": subset["est_market_value"].median(),
             "n": len(subset),
@@ -156,8 +164,22 @@ def chart_assessed_vs_market(df):
     ax.set_xticklabels(stats_df["Property Type"])
     ax.yaxis.set_major_formatter(dollar_formatter)
     ax.set_ylabel("Median Value")
-    ax.set_title("Median Assessed vs. Estimated Market Value by Property Type")
+    ax.set_title("Median Assessed vs. Estimated Market Value, by Property Type",
+                 pad=30)
+    # Clarify these are all parcels split by type, not vacant subtypes.
+    ax.text(0.5, 1.04,
+            "Every parcel, grouped by type — “Vacant land” is the "
+            "vacant-classified set, not a subtype of the others",
+            transform=ax.transAxes, ha="center", va="bottom", fontsize=9.5,
+            color="#666666")
     ax.legend()
+    # Source / methodology for the market estimate (raised in review).
+    fig.text(0.5, -0.02,
+             "Market estimate: tiered model — recent sale trended by the regional "
+             "Housing Price Index; else CPI-deflated prior sale; else census "
+             "block-group comparables (see 01_market_value_by_tier).  "
+             "Assessed = county Prop-13 assessed value.",
+             ha="center", va="top", fontsize=7.5, color="#888888")
     fig.tight_layout()
     fig.savefig(FIG_DIR / "02_assessed_vs_market.png", dpi=150, bbox_inches="tight")
     plt.close(fig)

@@ -54,7 +54,7 @@
     },
   });
 
-  const blightHeat = L.heatLayer([], {
+  const hsHeat = L.heatLayer([], {
     radius: 18,
     blur: 22,
     maxZoom: 16,
@@ -65,12 +65,12 @@
   // ── Load data ────────────────────────────────────────────────
   Promise.all([
     fetch("map_data/vacant_parcels.json").then((r) => r.json()),
-    fetch("map_data/blight_311.json").then((r) => r.json()),
+    fetch("map_data/hs_311.json").then((r) => r.json()),
     fetch("map_data/hotspots_summary.json").then((r) => r.json()),
   ])
-    .then(([parcels, blight, hotspots]) => {
+    .then(([parcels, hs, hotspots]) => {
       addParcels(parcels);
-      addBlight(blight);
+      addHs(hs);
       renderHotspots(hotspots);
     })
     .catch((err) => {
@@ -114,10 +114,10 @@
     parcelCluster.addTo(map);
   }
 
-  function addBlight(blight) {
-    const heatPoints = blight.points.map((p) => [p[0], p[1], 0.6]);
-    blightHeat.setLatLngs(heatPoints);
-    blightHeat.addTo(map);
+  function addHs(hs) {
+    const heatPoints = hs.points.map((p) => [p[0], p[1], 0.6]);
+    hsHeat.setLatLngs(heatPoints);
+    hsHeat.addTo(map);
   }
 
   function renderHotspots(hotspots) {
@@ -148,9 +148,9 @@
       if (layer === "parcels") {
         if (on) parcelCluster.addTo(map);
         else map.removeLayer(parcelCluster);
-      } else if (layer === "blight") {
-        if (on) blightHeat.addTo(map);
-        else map.removeLayer(blightHeat);
+      } else if (layer === "hs") {
+        if (on) hsHeat.addTo(map);
+        else map.removeLayer(hsHeat);
       }
     });
   });

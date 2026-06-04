@@ -3,10 +3,10 @@ Build the public-facing map + figure assets for results/index.html.
 
 Outputs (all under results/map_data/ and results/figures/):
   * map_data/vacant_parcels.json      - compact array of vacant parcel points (no PII)
-  * map_data/blight_311.json          - housing/blight 311 call coordinates
+  * map_data/hs_311.json              - housing / health-&-safety 311 call coordinates
   * map_data/hotspots_summary.json    - city-level rollup for callouts
   * figures/01_prop13_gap_simple.png  - voter-friendly gap chart
-  * figures/03_blight_signals_simple.png - top 311 co-occurrences
+  * figures/03_signal_lift_simple.png - top 311 co-occurrences
 
 This is a one-time build script — re-run after pipeline changes.
 """
@@ -99,7 +99,7 @@ def build_parcel_geojson() -> None:
     print(f"  -> {target.name}  ({len(points):,} points, {size_mb:.1f} MB)")
 
 
-# ── 2. 311 blight signal points (housing-related calls only) ─────────────────
+# ── 2. 311 health-&-safety signal points (housing-related calls only) ────────
 HOUSING_CATS = (
     "Code Enforcement Housing - Boardup",
     "Code Enforcement Housing - Complaint",
@@ -128,7 +128,7 @@ def build_311_json() -> None:
         columns=["CategoryName"],
         where=f"CategoryName IN {quoted}",
     )
-    print(f"  {len(gdf):,} housing-blight calls")
+    print(f"  {len(gdf):,} housing / health-&-safety calls")
 
     gdf = gdf.to_crs("EPSG:4326")
     gdf = gdf[gdf.geometry.notna() & ~gdf.geometry.is_empty]
@@ -143,7 +143,7 @@ def build_311_json() -> None:
                    for r in gdf[["lat", "lon", "lid"]].dropna().itertuples(index=False)],
     }
 
-    target = MAPDIR / "blight_311.json"
+    target = MAPDIR / "hs_311.json"
     target.write_text(json.dumps(payload, separators=(",", ":")))
     size_mb = target.stat().st_size / 1e6
     print(f"  -> {target.name}  ({len(payload['points']):,} points, {size_mb:.1f} MB)")
@@ -232,67 +232,88 @@ def build_prop13_simple() -> None:
     print(f"  -> {target.name}")
 
 
-# ── 5. Simplified blight-signal figure ───────────────────────────────────────
-def build_blight_simple() -> None:
-    print("Building voter-friendly 311 figure...")
+# ── 5. Simplified 311 signal-lift figure ─────────────────────────────────────
+def build_signal_lift_simple() -> None:
+    """Voter-friendly co-occurrence figure.
+
+    Fix (per Jeff's review of the old version): the bold number on each bar and
+    the sentence beneath it now use the SAME value — the actual ``lift`` from
+    correlated_pairs.csv — instead of a hand-typed "~6×" approximation that
+    disagreed with the bar. "Lift" is stated plainly so the multiplier is
+    self-explanatory, and the relationship is phrased symmetrically (two signals
+    *share an address* N× more often than chance) because lift is symmetric.
+    """
+    print("Building voter-friendly 311 signal-lift figure...")
     pairs = pd.read_csv(ROOT / "311_heatmap" / "correlated_pairs.csv")
 
-    # Pick intuitive, high-lift, statistically significant housing pairs
+    # (category_1, category_2, short pair label, plain-English subject of the
+    # sentence). The multiplier is read from the data, never hand-written.
     picks = [
         ("Code Enforcement Housing - Boardup", "Homeless Camp - Primary Private Property",
-         "When you see a boarded-up building, you’re ~6× more likely to also see a homeless‑camp call at that same address."),
+         "Board-ups ↔ encampments",
+         "Boarded-up buildings and homeless-camp reports"),
         ("Code Enforcement Housing - Complaint", "Code Enforcement Pest",
-         "Properties with housing‑code complaints are ~13× more likely to also report pests."),
+         "Housing complaints ↔ pests",
+         "Housing-code complaints and pest-control calls"),
         ("Animal Control Abandoned", "Code Enforcement Housing - Complaint",
-         "Addresses with abandoned animals are ~5× more likely to have a housing complaint."),
+         "Abandoned animals ↔ housing",
+         "Abandoned-animal calls and housing-code complaints"),
         ("Code Enforcement Housing - Boardup", "Code Enforcement Junk & Debris",
-         "Boarded buildings are ~4× more likely to attract junk and debris dumping."),
+         "Board-ups ↔ dumping",
+         "Boarded-up buildings and junk & debris dumping"),
     ]
 
     rows = []
-    for c1, c2, blurb in picks:
+    for c1, c2, label, subject in picks:
         match = pairs[((pairs["category_1"] == c1) & (pairs["category_2"] == c2))
                       | ((pairs["category_1"] == c2) & (pairs["category_2"] == c1))]
         if match.empty:
             continue
         row = match.iloc[0]
-        short = (
-            blurb,
-            row["lift"],
-            int(row["co_occur_addrs"]),
-        )
-        rows.append(short)
+        lift = float(row["lift"])
+        n = int(row["co_occur_addrs"])
+        # Text multiplier derived FROM the data so it always matches the bar.
+        blurb = (f"{subject} show up at the same address "
+                 f"{lift:.1f}× more often than random chance.")
+        rows.append((label, blurb, lift, n))
 
-    fig, ax = plt.subplots(figsize=(10, 5.2), dpi=150)
+    fig, ax = plt.subplots(figsize=(10, 5.6), dpi=150)
     fig.patch.set_facecolor("#fef9f6")
     ax.set_facecolor("#fef9f6")
 
     y = np.arange(len(rows))
-    lifts = [r[1] for r in rows]
-    blurbs = [r[0] for r in rows]
-    addrs = [r[2] for r in rows]
+    labels = [r[0] for r in rows]
+    blurbs = [r[1] for r in rows]
+    lifts = [r[2] for r in rows]
+    addrs = [r[3] for r in rows]
 
-    ax.barh(y, lifts, color="#13587f", height=0.55)
+    ax.barh(y, lifts, color="#13587f", height=0.5)
     for i, (lift, n) in enumerate(zip(lifts, addrs)):
-        ax.text(lift + 0.3, i, f"{lift:.1f}×    ({n:,} addresses)", va="center", fontsize=11, color="#15191c", fontweight="bold")
+        ax.text(lift + max(lifts) * 0.02, i,
+                f"{lift:.1f}×   ({n:,} shared addresses)",
+                va="center", fontsize=11, color="#15191c", fontweight="bold")
 
-    ax.set_yticks(y, ["" for _ in rows])
+    ax.set_yticks(y, labels, fontsize=10.5, fontweight="bold")
     ax.invert_yaxis()
-    ax.set_xlim(0, max(lifts) * 1.45)
+    ax.set_xlim(0, max(lifts) * 1.5)
     ax.set_xticks([])
     for spine in ("top", "right", "bottom", "left"):
         ax.spines[spine].set_visible(False)
 
-    # Long blurbs as wrapped text below each bar
+    # Plain sentence beneath each bar — same multiplier as the bar.
     for i, b in enumerate(blurbs):
-        ax.text(0, i + 0.42, b, fontsize=10, color="#5a6068", va="top", wrap=True)
+        ax.text(0, i + 0.34, b, fontsize=9.5, color="#5a6068", va="top")
 
     ax.set_title(
-        "What 311 calls reveal about urban blight",
-        fontsize=13, color="#15191c", pad=14, loc="left",
+        "How health & safety 311 calls cluster together",
+        fontsize=14, color="#15191c", pad=34, loc="left",
     )
-    plt.tight_layout()
-    target = FIGDIR / "03_blight_signals_simple.png"
+    ax.text(0, 1.012,
+            "“Lift” = how many times more often two complaint types share an "
+            "address than random chance (higher = tighter link)",
+            transform=ax.transAxes, fontsize=10, color="#5a6068", va="bottom")
+    fig.subplots_adjust(top=0.84)
+    target = FIGDIR / "03_signal_lift_simple.png"
     plt.savefig(target, dpi=150, bbox_inches="tight", facecolor="#fef9f6")
     plt.close()
     print(f"  -> {target.name}")
@@ -303,7 +324,7 @@ def main() -> None:
     build_311_json()
     build_hotspot_summary()
     build_prop13_simple()
-    build_blight_simple()
+    build_signal_lift_simple()
     print("\nDone.")
 
 

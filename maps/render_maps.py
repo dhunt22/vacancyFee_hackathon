@@ -4,12 +4,18 @@ Vacancy x 311 — pyQGIS map suite
 Renders a small suite of presentation maps over an OpenStreetMap basemap for
 the vacancy-fee story:
 
-    1. blight_311_county      — 311 blight-call density, whole urbanized county
-    2. blight_311_midtown     — same density zoomed to downtown / midtown
-    3. vacant_parcels_county  — vacant parcels coloured by vacancy tier, county
-    4. vacant_parcels_midtown — vacant parcels by tier, downtown / midtown
-    5. synthesis_county       — blight density + vacant parcels overlaid, county
-    6. synthesis_midtown      — blight density + vacant parcels, midtown
+    1. health_safety_311_county   — H&S 311-call density, whole urbanized county
+    2. health_safety_311_midtown  — same density zoomed to downtown / midtown
+    3. vacant_parcels_county      — vacant parcels coloured by vacancy tier, county
+    4. vacant_parcels_midtown     — vacant parcels by tier, downtown / midtown
+    5. synthesis_county           — H&S density + vacant parcels overlaid, county
+    6. synthesis_midtown          — H&S density + vacant parcels, midtown
+    7. predicted_vacancy_county   — 311-predicted candidate vacancies, county
+    8. predicted_vacancy_midtown  — 311-predicted candidate vacancies, midtown
+
+("Health & safety" / nuisance is the project's reframing of what older work
+called "blight" — a term urban-land-use research avoids for its racist
+urban-renewal connotations.)
 
 The 311 "heatmap" is built as a smoothed density RASTER with numpy/GDAL rather
 than QgsHeatmapRenderer: the live heatmap renderer's auto-scaling is dominated
@@ -23,8 +29,9 @@ Run inside the QGIS python environment (Windows):
     "C:\\Program Files\\QGIS 3.38.1\\bin\\python-qgis.bat" maps\\render_maps.py
 
 Inputs:
-    maps/data/blight_311.gpkg              (361k blight 311 points, EPSG:4326)
+    maps/data/hs_311.gpkg                  (health & safety 311 points, EPSG:4326)
     hackathon_data/vacant_parcels.geojson  (28k vacant parcels, EPSG:4326)
+    maps/data/predicted_vacancies.gpkg     (optional; from predict_vacancy.py)
 
 Outputs: maps/figures/*.png   (+ intermediate density GeoTIFFs in maps/data/)
 """
@@ -54,7 +61,8 @@ from qgis.PyQt.QtCore import Qt
 SCRIPT_DIR = Path(__file__).resolve().parent
 PROJECT_ROOT = SCRIPT_DIR.parent
 DATA_DIR = SCRIPT_DIR / "data"
-BLIGHT_GPKG = DATA_DIR / "blight_311.gpkg"
+HS_GPKG = DATA_DIR / "hs_311.gpkg"
+PREDICTED_GPKG = DATA_DIR / "predicted_vacancies.gpkg"
 VACANT_GEOJSON = PROJECT_ROOT / "hackathon_data" / "vacant_parcels.geojson"
 OUT_DIR = SCRIPT_DIR / "figures"
 
@@ -91,12 +99,12 @@ _PTS_CACHE = None
 
 
 def _load_points():
-    """Return (lon, lat) numpy arrays of all blight 311 points (cached)."""
+    """Return (lon, lat) numpy arrays of all health-&-safety 311 points (cached)."""
     global _PTS_CACHE
     if _PTS_CACHE is not None:
         return _PTS_CACHE
-    ds = ogr.Open(str(BLIGHT_GPKG))
-    lyr = ds.GetLayer("blight_311")
+    ds = ogr.Open(str(HS_GPKG))
+    lyr = ds.GetLayer("hs_311")
     xs, ys = [], []
     for f in lyr:
         g = f.GetGeometryRef()
@@ -104,7 +112,7 @@ def _load_points():
             xs.append(g.GetX())
             ys.append(g.GetY())
     _PTS_CACHE = (np.asarray(xs), np.asarray(ys))
-    print(f"  loaded {len(xs):,} blight points for density build")
+    print(f"  loaded {len(xs):,} health & safety points for density build")
     return _PTS_CACHE
 
 
@@ -121,7 +129,7 @@ def _smooth(a, passes):
 
 
 def build_density_raster(bbox, cell_deg, smooth_passes, clip_pct, out_tif):
-    """Histogram blight points into a grid, smooth, clip the outlier, write TIF.
+    """Histogram H&S points into a grid, smooth, clip the outlier, write TIF.
 
     Returns the clip value (density mapped to the top of the colour ramp).
     """
@@ -166,7 +174,7 @@ def basemap_layer():
     return lyr
 
 
-def density_layer(tif_path, clip, name="Blight 311 density"):
+def density_layer(tif_path, clip, name="Health & safety 311 density"):
     """Single-band pseudocolour raster: transparent -> yellow -> orange -> red."""
     lyr = QgsRasterLayer(str(tif_path), name)
     if not lyr.isValid():
@@ -219,6 +227,36 @@ def vacant_layer(outline_only=False, name="Vacant parcels"):
     if not outline_only:
         lyr.setOpacity(0.9)
     return lyr
+
+
+def _single_fill_layer(uri, props, name, provider="ogr", opacity=1.0):
+    """A polygon layer with one flat fill symbol (uses the default renderer)."""
+    lyr = QgsVectorLayer(uri, name, provider)
+    if not lyr.isValid():
+        raise RuntimeError(f"layer invalid: {uri}")
+    if not lyr.crs().isValid():
+        lyr.setCrs(WGS84)
+    lyr.renderer().setSymbol(QgsFillSymbol.createSimple(props))
+    lyr.setOpacity(opacity)
+    return lyr
+
+
+def vacant_context_layer():
+    """Known coded-vacant parcels as a faint grey underlay (context)."""
+    return _single_fill_layer(
+        str(VACANT_GEOJSON),
+        {"color": "141,153,174,90", "outline_color": "141,153,174,140",
+         "outline_width": "0.05"},
+        "Known vacant (coded)", opacity=0.9)
+
+
+def predicted_layer():
+    """311-predicted candidate vacancies (not in the coded set), in magenta."""
+    return _single_fill_layer(
+        f"{PREDICTED_GPKG}|layername=candidates",
+        {"color": "199,21,133,170", "outline_color": "255,255,255,160",
+         "outline_width": "0.08"},
+        "Predicted vacancy (from 311)", opacity=0.95)
 
 
 # ── Layout / render ──────────────────────────────────────────────────────────
@@ -291,7 +329,9 @@ def render_map(layers, bbox, title, subtitle, out_name,
         leg.setTitle("")
         leg.setAutoUpdateModel(False)
         leg.model().rootGroup().clear()
-        leg.model().rootGroup().addLayer(legend_layer)
+        ll = legend_layer if isinstance(legend_layer, (list, tuple)) else [legend_layer]
+        for one in ll:
+            leg.model().rootGroup().addLayer(one)
         leg.setLegendFilterByMapEnabled(False)
         leg.setBackgroundColor(QColor(255, 255, 255, 225))
         leg.setBackgroundEnabled(True)
@@ -333,6 +373,23 @@ def render_map(layers, bbox, title, subtitle, out_name,
 
 # ── Main ─────────────────────────────────────────────────────────────────────
 
+def render_predicted_maps():
+    """Maps 7/8 — candidate vacancies the 311 signal surfaces (county + midtown)."""
+    sub = ("Parcels flagged vacant-like by their 311 signal profile, "
+           "beyond the coded-vacant set")
+    for bbox, place, fname in [
+        (EXTENT_COUNTY, "Sacramento County", "predicted_vacancy_county.png"),
+        (EXTENT_MIDTOWN, "Downtown & Midtown", "predicted_vacancy_midtown.png"),
+    ]:
+        ctx = vacant_context_layer()
+        pred = predicted_layer()
+        render_map(
+            [pred, ctx, basemap_layer()], bbox,
+            f"311-predicted candidate vacancies — {place}",
+            sub, fname, legend_layer=[pred, ctx],
+        )
+
+
 def main():
     QgsApplication.setPrefixPath(os.environ.get("QGIS_PREFIX_PATH", ""), True)
     app = QgsApplication([], False)
@@ -347,23 +404,23 @@ def main():
     clip_mid = build_density_raster(EXTENT_MIDTOWN, 0.00030, 8, 97, midtown_tif)
 
     print("rendering maps...")
-    NOTE = "Blight 311 call density (low → high) · ~362k calls, 2020–2025"
+    NOTE = "Health & safety 311 call density (low → high) · ~362k calls, 2020–2025"
 
     # 1. 311 density — county
     render_map(
         [density_layer(county_tif, clip_county), basemap_layer()],
         EXTENT_COUNTY,
-        "Blight 311 call hot spots — Sacramento County",
+        "Health & safety 311 call hot spots — Sacramento County",
         "Density of code-enforcement, dumping & encampment complaints, 2020–2025",
-        "blight_311_county.png", density_note=NOTE,
+        "health_safety_311_county.png", density_note=NOTE,
     )
     # 2. 311 density — midtown
     render_map(
         [density_layer(midtown_tif, clip_mid), basemap_layer()],
         EXTENT_MIDTOWN,
-        "Blight 311 call hot spots — Downtown & Midtown",
+        "Health & safety 311 call hot spots — Downtown & Midtown",
         "Density of code-enforcement, dumping & encampment complaints, 2020–2025",
-        "blight_311_midtown.png", density_note=NOTE,
+        "health_safety_311_midtown.png", density_note=NOTE,
     )
     # 3. vacant parcels — county
     vl = vacant_layer()
@@ -386,8 +443,8 @@ def main():
     render_map(
         [vl3, density_layer(county_tif, clip_county), basemap_layer()],
         EXTENT_COUNTY,
-        "Blight & vacancy overlap — Sacramento County",
-        "Blight 311 call density with vacant parcels outlined",
+        "Vacancy & health-&-safety overlap — Sacramento County",
+        "Health & safety 311 call density with vacant parcels outlined",
         "synthesis_county.png", legend_layer=vl3,
         density_note=NOTE,
     )
@@ -396,11 +453,18 @@ def main():
     render_map(
         [vl4, density_layer(midtown_tif, clip_mid), basemap_layer()],
         EXTENT_MIDTOWN,
-        "Blight & vacancy overlap — Downtown & Midtown",
-        "Blight 311 call density with vacant parcels outlined",
+        "Vacancy & health-&-safety overlap — Downtown & Midtown",
+        "Health & safety 311 call density with vacant parcels outlined",
         "synthesis_midtown.png", legend_layer=vl4,
         density_note=NOTE,
     )
+
+    # 7/8. predicted vacancies from 311 (only if predict_vacancy.py has run)
+    if PREDICTED_GPKG.exists():
+        render_predicted_maps()
+    else:
+        print(f"  (skipping predicted-vacancy maps — run predict_vacancy.py to "
+              f"build {PREDICTED_GPKG.name})")
 
     app.exitQgis()
     print("Done.")
