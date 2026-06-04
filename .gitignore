@@ -10,11 +10,15 @@
 data/
 hackathon_data/raw_data/
 
-# Pipeline outputs that can be regenerated
-parcel_actualValue/QC/                       # external (Jeff's) input data
-parcel_actualValue/shapefiles/               # rebuilt by export_shapefile.py
-parcel_actualValue/qc_parcel_diffs.csv       # rebuilt by compare_qc.py
-parcel_actualValue/three_way_diffs.csv       # rebuilt by compare_three_way.py
+# Pipeline outputs that can be regenerated.
+# NOTE: git does NOT support inline (end-of-line) comments in .gitignore — a
+# trailing "# ..." becomes part of the pattern and silently matches nothing.
+# That defect is why the 400 MB shapefiles slipped into history. Keep comments
+# on their own lines.
+parcel_actualValue/QC/
+parcel_actualValue/shapefiles/
+parcel_actualValue/qc_parcel_diffs.csv
+parcel_actualValue/three_way_diffs.csv
 
 # Generated binary docs
 *.docx
