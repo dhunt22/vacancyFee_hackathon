@@ -375,7 +375,10 @@ def fig_burden_per_parcel(parcels, joined, F):
            f"calls than an occupied one")
     _titled(ax, "Vacant parcels are high-maintenance", sub)
     ax.margins(y=0.18)
-    _footer(fig)
+    _footer(fig, "Health & safety 311 calls = code-enforcement, illegal-dumping, "
+                 "encampment & abandoned-animal reports\n"
+                 "Source: Sacramento County 311 (SalesForce311) x parcel assessor "
+                 "data  ·  vacancyfee.org")
     _save(fig, "fig1_burden_per_parcel.png")
 
 
@@ -535,9 +538,20 @@ def fig_council_synthesis(gpd, parcels, joined, F):
     ax1.set_xticks(x)
     ax1.set_xticklabels([str(d) for d in df.index], rotation=45, ha="right")
     ax1.set_xlabel("Council district")
-    ax1.set_title("Where vacancy and health & safety calls overlap")
+    ax1.set_title("Where vacancy and health & safety calls overlap", pad=26)
+    # Dual-axis caveat: the two y-axes are scaled independently, so don't compare
+    # bar heights directly — compare the pattern across districts.
+    ax1.text(0.0, 1.02,
+             "Grey = vacant parcels (left axis)  ·  Red = health & safety 311 "
+             "calls (right axis)  ·  axes scaled independently",
+             transform=ax1.transAxes, ha="left", va="bottom", fontsize=9.5,
+             color="#666666")
     ax1.grid(axis="x", visible=False)
-    fig.legend(loc="upper right", bbox_to_anchor=(0.9, 0.95), frameon=False)
+    # Legend inside the plot (upper-right has headroom above the shorter bars) so
+    # it no longer collides with the title.
+    ax1.legend([b1, b2], ["Vacant parcels", "Health & safety 311 calls"],
+               loc="upper right", frameon=True, facecolor="white",
+               framealpha=0.92, edgecolor="#cccccc")
     _footer(fig)
     _save(fig, "fig5_council_paired.png")
 
@@ -551,14 +565,20 @@ def fig_council_synthesis(gpd, parcels, joined, F):
                         xytext=(5, 4), textcoords="offset points", color="#555555")
         m, b = np.polyfit(df["vacant"], df["calls"], 1)
         xs = np.linspace(df["vacant"].min(), df["vacant"].max(), 50)
-        ax.plot(xs, m * xs + b, color=C_ACCENT, linestyle="--", linewidth=1.5)
+        ax.plot(xs, m * xs + b, color=C_ACCENT, linestyle="--", linewidth=1.5,
+                label="best-fit trend")
         r = float(np.corrcoef(df["vacant"], df["calls"])[0, 1])
         F.add("council_vacant_vs_calls_r", round(r, 3))
         ax.set_xlabel("Vacant parcels in district")
         ax.set_ylabel("Health & safety 311 calls in district")
-        ax.set_title("More vacancy, more health & safety complaints")
-        ax.text(0.05, 0.92, f"r = {r:.2f}", transform=ax.transAxes,
-                fontsize=13, fontweight="bold", color=C_ACCENT)
+        _titled(ax, "More vacancy, more health & safety complaints",
+                "Each dot is a council district — districts with more vacant land "
+                "field more 311 calls", ha="left")
+        ax.text(0.05, 0.93, f"r = {r:.2f}", transform=ax.transAxes,
+                fontsize=14, fontweight="bold", color=C_ACCENT)
+        ax.text(0.05, 0.875, "correlation · 1.0 = perfect", transform=ax.transAxes,
+                fontsize=9, color="#777777")
+        ax.legend(loc="lower right", frameon=False, fontsize=9.5)
         _footer(fig)
         _save(fig, "fig6_council_scatter.png")
 
@@ -581,7 +601,8 @@ def fig_temporal_trend(joined, F):
 
     fig, ax = plt.subplots(figsize=(12, 5.5))
     ax.fill_between(monthly.index, monthly.values, color=C_VACANT, alpha=0.18)
-    ax.plot(monthly.index, monthly.values, color=C_VACANT, linewidth=2)
+    ax.plot(monthly.index, monthly.values, color=C_VACANT, linewidth=2,
+            label="Monthly calls")
     # 12-month rolling average for the trend read.
     roll = monthly.rolling(12, min_periods=3).mean()
     ax.plot(roll.index, roll.values, color=C_ACCENT, linewidth=2, linestyle="--",
@@ -609,7 +630,9 @@ def fig_temporal_trend(joined, F):
                 "  not lower demand",
                 fontsize=8.5, color="#777777", va="top", ha="left", style="italic")
 
-    ax.legend(frameon=False, loc="upper left", bbox_to_anchor=(0.18, 1.0))
+    # Place the legend in the empty pre-2023 area BELOW the coverage caveat so
+    # the two don't overlap (the curve is near zero there).
+    ax.legend(frameon=False, loc="upper left", bbox_to_anchor=(0.02, 0.72))
     ax.margins(x=0.01)
     F.add("temporal_months_covered", int(len(monthly)))
     _footer(fig)
@@ -658,7 +681,10 @@ def fig_cost_vs_fee(F):
             f"~{annual_calls:,.0f} health & safety 311 calls a year on vacant "
             f"parcels · before cleanup, abatement, or lost tax base")
     ax.margins(y=0.18)
-    _footer(fig)
+    _footer(fig, "The navy bar is the share of the red total attributable to "
+                 "vacancy (calls above the occupied-parcel rate)\n"
+                 "Source: Sacramento County 311 (SalesForce311) x parcel assessor "
+                 "data  ·  vacancyfee.org")
     _save(fig, "fig8_cost_vs_fee.png")
 
 
@@ -667,9 +693,11 @@ def fig_cost_vs_fee(F):
 # Family grouping for the complaint-signature chart: a readable label + a color
 # per top-level complaint family. Used to colour the bars AND build a real
 # legend, so the chart no longer references a "red" highlight that never appears.
+# Priority and regular encampment calls share a colour, so they share ONE legend
+# label too (two identical red swatches read as a mistake otherwise).
 _FAMILIES = [
-    ("Homeless Camp - Primary", "Homeless camp (priority)", C_VACANT),
-    ("Homeless Camp", "Homeless camp", C_VACANT),
+    ("Homeless Camp - Primary", "Homeless camp / encampment", C_VACANT),
+    ("Homeless Camp", "Homeless camp / encampment", C_VACANT),
     ("Code Enforcement", "Code enforcement", C_ACCENT),
     ("Solid Waste", "Illegal dumping / waste", C_GOLD),
     ("Animal Control", "Abandoned animals", C_GREEN),

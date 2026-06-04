@@ -134,6 +134,16 @@ def fig_signals(lift, base_rate):
     S._titled(ax, "Which 311 signals predict vacancy",
               f"A parcel with one of these call types is far more likely to be "
               f"vacant than the {base_rate*100:.1f}% county baseline", ha="left")
+    # Legend explaining the bar colours (complaint families that appear).
+    import matplotlib.patches as mpatches
+    seen, handles = set(), []
+    for _pre, label, color in S._FAMILIES:
+        if label in {l for l, _c in fams} and label not in seen:
+            seen.add(label)
+            handles.append(mpatches.Patch(color=color, label=label))
+    if handles:
+        ax.legend(handles=handles, loc="lower right", frameon=False, fontsize=9,
+                  title="Complaint family")
     ax.grid(axis="y", visible=False)
     S._footer(fig)
     FIG_DIR.mkdir(parents=True, exist_ok=True)
